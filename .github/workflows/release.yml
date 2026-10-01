@@ -1,0 +1,92 @@
+name: Signed release
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a signed stable Release (requires existing version tag)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - shell: pwsh
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Version and policy checks
+        id: version
+        shell: pwsh
+        env:
+          REQUEST_PUBLISH: ${{ inputs.publish }}
+        run: |
+          ./tools/check.ps1
+          $releaseVersion = ConvertFrom-StringData (Get-Content version.properties -Raw)
+          $releaseTag = "v$($releaseVersion.versionName)"
+          if ($env:REQUEST_PUBLISH -eq 'true') {
+            $tagRevision = git rev-list -n 1 $releaseTag
+            if ($LASTEXITCODE -ne 0 -or -not $tagRevision) { throw 'Create the stable version tag before publishing' }
+            $buildRevision = git rev-parse HEAD
+            if ($tagRevision.Trim() -ne $buildRevision.Trim()) { throw 'The release tag must point to the commit being built' }
+          }
+          "tag=$releaseTag" >> $env:GITHUB_OUTPUT
+      - name: Build with persistent signing identity
+        shell: pwsh
+        env:
+          SPLASHSKIP_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          SPLASHSKIP_STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          SPLASHSKIP_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          SPLASHSKIP_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          if (-not $env:SPLASHSKIP_KEYSTORE_BASE64 -or -not $env:SPLASHSKIP_KEY_ALIAS) { throw 'Release signing secrets are not configured' }
+          $releaseKey = Join-Path $env:RUNNER_TEMP 'splashskip-release.keystore'
+          try {
+            [IO.File]::WriteAllBytes($releaseKey, [Convert]::FromBase64String($env:SPLASHSKIP_KEYSTORE_BASE64))
+            ./build.ps1 -SdkPath $env:ANDROID_HOME -JavaHome $env:JAVA_HOME -SigningKey $releaseKey -KeyAlias $env:SPLASHSKIP_KEY_ALIAS
+            $releaseVersion = ConvertFrom-StringData (Get-Content version.properties -Raw)
+            $releaseApk = "SplashSkip-v$($releaseVersion.versionName).apk"
+            Copy-Item -LiteralPath app-debug.apk -Destination $releaseApk
+            $releaseHash = (Get-FileHash -LiteralPath $releaseApk -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$releaseHash  $releaseApk" | Set-Content -Encoding utf8NoBOM SHA256SUMS.txt
+          } finally {
+            if (Test-Path -LiteralPath $releaseKey) { Remove-Item -LiteralPath $releaseKey -Force }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-release
+          path: |
+            SplashSkip-v*.apk
+            SHA256SUMS.txt
+            RELEASE_NOTES.md
+  publish:
+    if: ${{ inputs.publish }}
+    needs: build
+    runs-on: windows-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed-release
+      - name: Publish verified version tag
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          $releaseArtifacts = @(Get-ChildItem -LiteralPath . -Filter 'SplashSkip-v*.apk' | ForEach-Object FullName)
+          $releaseArtifacts += (Resolve-Path -LiteralPath SHA256SUMS.txt).Path
+          gh release create $env:RELEASE_TAG --verify-tag --title $env:RELEASE_TAG --notes-file RELEASE_NOTES.md @releaseArtifacts
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }

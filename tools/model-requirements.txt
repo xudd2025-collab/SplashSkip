@@ -1,0 +1,4 @@
+numpy>=2.0,<3
+Pillow>=11,<13
+flatbuffers>=24,<27
+tflite==2.18.0

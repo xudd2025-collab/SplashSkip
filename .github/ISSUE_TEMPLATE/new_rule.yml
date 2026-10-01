@@ -1,0 +1,21 @@
+name: 应用适配
+description: 提供新的跳过或关闭样式
+body:
+  - type: input
+    id: app
+    attributes:
+      label: 应用名称与包名
+    validations:
+      required: true
+  - type: textarea
+    id: layout
+    attributes:
+      label: 广告样式和目标
+      description: 说明如何出现、按钮位置、倒计时，以及是否能手动关闭。
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: 已脱敏截图与验证
+      description: 去除个人内容后提供广告和正常页面样本；注明手机型号、分辨率和应用版本。

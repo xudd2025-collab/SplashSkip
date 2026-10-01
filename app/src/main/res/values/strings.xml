@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="service_description">在本机识别开屏广告的跳过按钮，以及你启用的应用内广告关闭与自动进直播取消规则。屏幕内容不上传。</string>
+</resources>

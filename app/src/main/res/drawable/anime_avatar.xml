@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Original gentle anime kitten mascot. Apache-2.0. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#F5F0FB" android:pathData="M0,0H108V108H0Z" />
+    <path android:fillColor="#E9E6F8" android:pathData="M0,76C28,51 80,53 108,75V108H0Z" />
+    <path android:fillColor="#FFFFFF" android:fillAlpha="0.7" android:pathData="M17,53C17,29 32,17 55,17C78,17 92,34 92,56C92,80 76,94 53,94C29,94 17,76 17,53Z" />
+    <path android:fillColor="#D9C9ED" android:pathData="M25,89C25,80 37,75 54,75C71,75 84,80 84,89C84,98 25,99 25,89Z" />
+    <path android:fillColor="#EEE4F7" android:strokeColor="#A18AB9" android:strokeWidth="1.1" android:pathData="M36,84Q35,68 54,68Q73,68 73,86L69,94H40Z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M44,84C43,78 47,73 54,73C62,73 65,78 64,85L61,92H47Z" />
+    <path android:fillColor="#FDF9F4" android:strokeColor="#A18AB9" android:strokeWidth="1.2" android:strokeLineJoin="round" android:pathData="M26,51C24,40 24,28 28,23Q40,25 45,35L65,35Q73,25 83,25C87,37 84,47 83,52C87,64 79,77 66,80Q54,84 41,80C27,77 21,65 26,51Z" />
+    <path android:fillColor="#E6D7F1" android:pathData="M28,26Q38,28 42,36L33,40L27,45Q25,35 28,26ZM80,28Q84,37 80,47L70,38Q75,30 80,28Z" />
+    <path android:fillColor="#EECAD7" android:pathData="M30,31Q35,32 38,37L31,41Q29,37 30,31ZM78,33Q81,38 78,42L73,38Z" />
+    <path android:fillColor="#EEE4F5" android:pathData="M29,45C27,55 29,67 36,72Q54,85 73,72C79,67 82,58 80,47C87,60 83,74 68,79Q54,85 41,80C26,76 21,62 29,45Z" />
+    <path android:fillColor="#E5D7F0" android:pathData="M45,36L48,43L52,39L55,45L58,39L62,43L65,36Q55,33 45,36Z" />
+    <path android:fillColor="#FFFFFF" android:fillAlpha="0.8" android:pathData="M32,44Q38,39 43,41Q37,42 33,46ZM64,42Q72,40 76,46Q70,43 64,44Z" />
+    <path android:fillColor="#F3CCD8" android:fillAlpha="0.8" android:pathData="M28,60C28,57 33,56 37,58C42,61 37,65 33,64C30,64 28,62 28,60ZM69,59C72,56 78,57 79,60C79,64 70,65 68,62Z" />
+    <path android:fillColor="#00000000" android:strokeColor="#817092" android:strokeWidth="1.6" android:strokeLineCap="round" android:pathData="M34,55Q39,49 44,55M64,55Q69,49 74,55" />
+    <path android:fillColor="#D8A7BE" android:pathData="M50,58Q54,56 58,58Q57,62 54,62Q51,61 50,58Z" />
+    <path android:fillColor="#00000000" android:strokeColor="#A37E9A" android:strokeWidth="1.1" android:strokeLineCap="round" android:pathData="M54,62V64Q50,69 47,65M54,64Q58,69 61,65" />
+    <path android:fillColor="#00000000" android:strokeColor="#BCABC9" android:strokeWidth="0.8" android:strokeLineCap="round" android:pathData="M24,59L31,60M23,64L30,63M77,60L84,58M78,64L85,64" />
+    <path android:fillColor="#B49DD4" android:strokeColor="#FFFFFF" android:strokeWidth="0.7" android:strokeLineJoin="round" android:pathData="M51,78Q43,72 39,77L40,85Q46,89 51,82ZM57,78Q65,72 69,77L68,85Q62,89 57,82Z" />
+    <path android:fillColor="#D4BCEB" android:pathData="M43,77L42,83L49,80ZM65,77L66,83L59,80Z" />
+    <path android:fillColor="#F3E4FD" android:strokeColor="#A18AB9" android:strokeWidth="0.8" android:pathData="M50,78Q54,75 58,78V83Q54,86 50,83Z" />
+    <path android:fillColor="#FDF9F4" android:strokeColor="#A18AB9" android:strokeWidth="1" android:pathData="M34,83C29,80 26,85 28,91C31,96 42,95 43,91C43,87 40,84 34,83ZM74,83C79,80 82,85 80,91C77,96 66,95 65,91C65,87 68,84 74,83Z" />
+    <path android:fillColor="#00000000" android:strokeColor="#C1AECB" android:strokeWidth="0.7" android:strokeLineCap="round" android:pathData="M32,87L33,90M36,87L37,90M71,87L70,90M75,87L74,90" />
+    <path android:fillColor="#F4DAA5" android:pathData="M17,43L19,47L23,48L19,50L18,54L16,50L12,49L16,47ZM88,67L89,70L93,71L89,72L88,76L87,72L84,71L87,70Z" />
+    <path android:fillColor="#D8C9EA" android:pathData="M88,23C88,21 92,21 92,23C92,26 88,26 88,23ZM20,73C20,71 23,71 23,73C23,75 20,75 20,73Z" />
+</vector>

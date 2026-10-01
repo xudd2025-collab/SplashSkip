@@ -1,0 +1,22 @@
+name: 故障报告
+description: 连接、识别、点击或界面问题
+body:
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境
+      description: 助手版本、手机型号、Android 版本和目标应用版本。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤与实际结果
+      description: 说明开关和连接状态，以及预期结果。
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 可选样本
+      description: 截图和日志请先去除账号、消息、位置、验证码等个人内容。不要上传配对码、私钥或完整手机日志。

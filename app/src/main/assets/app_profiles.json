@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "apps": [
+    {
+      "package": "com.baidu.BaiduMap",
+      "label": "百度地图",
+      "referenceWidth": 1216,
+      "referenceHeight": 2640,
+      "scanWindowMs": 20000,
+      "bypassNodeTree": true,
+      "layouts": [
+        {"name": "baidu-pill", "coordinates": [950,90,1060,150,1060,130]},
+        {"name": "baidu-circle", "coordinates": [1070,165,1155,210,1090,180]},
+        {"name": "baidu-small-pill", "coordinates": [1000,188,1115,250,1040,220]}
+      ],
+      "popup": {
+        "name": "baidu-promo-close",
+        "crossTemplate": "baidu_promo_cross",
+        "ringTemplate": "baidu_promo_close",
+        "crossBox": [575,2090,645,2160],
+        "ringBox": [535,2050,685,2200],
+        "tap": [610,2125],
+        "crossThreshold": 0.72,
+        "ringThreshold": 0.55
+      }
+    },
+    {
+      "package": "tv.danmaku.bili",
+      "label": "哔哩哔哩",
+      "referenceWidth": 1216,
+      "referenceHeight": 2640,
+      "scanWindowMs": 8000,
+      "bypassNodeTree": false,
+      "inAppRules": "bilibili",
+      "layouts": []
+    }
+  ]
+}
