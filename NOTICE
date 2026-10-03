@@ -1,6 +1,16 @@
 SplashSkip / 开屏助手
 Copyright 2026 xudd2025-collab and SplashSkip contributors.
 
-Original project code and the cat mascot artwork are licensed under Apache-2.0.
+Starting with v0.6.32, original project code and the cat mascot artwork that
+the copyright holder is entitled to license are provided under the
+SplashSkip Source Available License 1.0; see LICENSE.
+Unauthorized paid distribution is prohibited. Preserve the author,
+official source link and visible source/license entry when redistributing.
+Official source: https://github.com/xudd2025-collab/SplashSkip
+Previously released Apache-2.0 versions retain their original grants;
+see LICENSES/Apache-2.0.txt. This notice does not relicense third-party work.
 Third-party components retain their own copyright notices and licenses.
 See third_party/ and third_party/local-adb/NOTICE.md for dependency notices.
+
+Offline PP-OCRv4 recognition and ONNX Runtime retain their third-party licenses.
+See third_party/onnxruntime/; notices are also bundled in assets/ui_text_licenses.txt.

@@ -6,7 +6,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <queries>
         <package android:name="moe.shizuku.privileged.api" />
         <intent>
@@ -37,6 +39,10 @@
             </intent-filter>
         </activity>
         <receiver android:name=".PairingReceiver" android:exported="false" />
+        <provider android:name=".UpdateApkProvider" android:authorities="com.codex.splashskip.updates"
+            android:exported="false" android:grantUriPermissions="true" />
+        <provider android:name=".DesktopCaptureProvider" android:authorities="com.codex.splashskip.capture"
+            android:exported="true" android:permission="android.permission.DUMP" />
         <service
             android:name=".SkipService"
             android:exported="true"

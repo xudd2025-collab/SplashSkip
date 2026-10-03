@@ -1,6 +1,36 @@
 {
-  "version": 2,
+  "version": 5,
   "apps": [
+    {
+      "package": "com.tencent.qqlive",
+      "label": "腾讯视频",
+      "referenceWidth": 1216,
+      "referenceHeight": 2702,
+      "scanWindowMs": 8000,
+      "bypassNodeTree": false,
+      "inAppRules": "tencent",
+      "layouts": []
+    },
+    {
+      "package": "com.baidu.netdisk",
+      "label": "百度网盘",
+      "referenceWidth": 1216,
+      "referenceHeight": 2640,
+      "scanWindowMs": 20000,
+      "bypassNodeTree": false,
+      "inAppRules": "netdisk",
+      "layouts": []
+    },
+    {
+      "package": "com.duowan.kiwi",
+      "label": "虎牙",
+      "referenceWidth": 2640,
+      "referenceHeight": 1216,
+      "scanWindowMs": 8000,
+      "bypassNodeTree": false,
+      "inAppRules": "huya",
+      "layouts": []
+    },
     {
       "package": "com.baidu.BaiduMap",
       "label": "百度地图",
@@ -9,20 +39,27 @@
       "scanWindowMs": 20000,
       "bypassNodeTree": true,
       "layouts": [
-        {"name": "baidu-pill", "coordinates": [950,90,1060,150,1060,130]},
-        {"name": "baidu-circle", "coordinates": [1070,165,1155,210,1090,180]},
-        {"name": "baidu-small-pill", "coordinates": [1000,188,1115,250,1040,220]}
+        {"name": "baidu-pill", "cropSize": [110,60]},
+        {"name": "baidu-circle", "cropSize": [85,45]},
+        {"name": "baidu-small-pill", "cropSize": [115,62]}
       ],
       "popup": {
         "name": "baidu-promo-close",
         "crossTemplate": "baidu_promo_cross",
         "ringTemplate": "baidu_promo_close",
-        "crossBox": [575,2090,645,2160],
-        "ringBox": [535,2050,685,2200],
-        "tap": [610,2125],
         "crossThreshold": 0.72,
         "ringThreshold": 0.55
       }
+    },
+    {
+      "package": "com.greenpoint.android.mc10086.activity",
+      "label": "中国移动",
+      "referenceWidth": 1216,
+      "referenceHeight": 2640,
+      "scanWindowMs": 8000,
+      "bypassNodeTree": false,
+      "inAppRules": "mobile",
+      "layouts": []
     },
     {
       "package": "tv.danmaku.bili",

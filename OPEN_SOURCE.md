@@ -1,6 +1,8 @@
-# 开源与发布
+# 源码公开与发布
 
-原创项目代码、训练代码和二次元小猫头像使用 Apache-2.0，见 `LICENSE` 与 `NOTICE`。第三方依赖保留各自许可，LGPL 组件的对应源码归档随依赖提供。
+自 v0.6.32 起，权利人有权授权的原创代码、训练代码、文档和二次元小猫头像使用源码可用许可，禁止未经许可售卖，见 `LICENSE` 与 `NOTICE`。分发时必须保留作者、官方源码链接和软件内的源码/许可入口。该许可不是 OSI 定义的标准开源许可。已发布的 Apache-2.0 旧版继续适用原授权，文本保存在 `LICENSES/Apache-2.0.txt`。
+
+第三方依赖保留各自许可，LGPL 组件的对应源码归档随依赖提供。没有代码混淆、加壳或源码加密；许可义务和 APK 签名不等于无法修改源码或绝对防倒卖。
 
 公开仓库：`https://github.com/xudd2025-collab/SplashSkip`。项目由所有者独立维护，说明见 [MAINTAINERS.md](MAINTAINERS.md)。
 
@@ -14,7 +16,7 @@
 
 官方 APK 的更新源由 `UpdateChecker.OFFICIAL_REPOSITORY` 固定为 `xudd2025-collab/SplashSkip`。应用忽略并清除旧版自定义源，不再提供输入入口。只读取公开正式 GitHub Releases，不读取 Git 提交或私有仓库，不要求手机填写账号令牌。
 
-稳定标签例如 `v0.5.2`，安装包文件名例如 `SplashSkip-v0.5.2.apk`。仓库未公开或没有正式 Release 时，应用会明确显示不可访问/尚无版本，不编造更新结果。
+稳定标签例如 `v0.6.32`，安装包文件名例如 `SplashSkip-v0.6.32.apk`。仓库未公开或没有正式 Release 时，应用会明确显示不可访问/尚无版本，不编造更新结果。
 
 ## 构建与签名
 
@@ -36,5 +38,5 @@
 源码归档：
 
 ```powershell
-python ./tools/package_source.py ../SplashSkip-source-v0.5.2.zip
+python ./tools/package_source.py ../SplashSkip-source-v0.6.32.zip
 ```

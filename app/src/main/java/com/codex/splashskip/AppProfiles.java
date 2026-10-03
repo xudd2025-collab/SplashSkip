@@ -14,13 +14,12 @@ import java.util.Map;
 final class AppProfiles {
     static final class Layout {
         final String name;
-        final int[] coordinates;
+        final int cropWidth,cropHeight;
         Layout(JSONObject json) throws Exception {
             name = json.getString("name");
-            JSONArray values = json.getJSONArray("coordinates");
-            if (values.length() != 6) throw new IllegalArgumentException("Layout requires six coordinates");
-            coordinates = new int[6];
-            for (int i = 0; i < 6; i++) coordinates[i] = values.getInt(i);
+            JSONArray size = json.getJSONArray("cropSize");
+            if(size.length()!=2 || size.getInt(0)<1 || size.getInt(1)<1)throw new IllegalArgumentException("Invalid crop dimensions");
+            cropWidth=size.getInt(0);cropHeight=size.getInt(1);
         }
     }
     static final class Profile {

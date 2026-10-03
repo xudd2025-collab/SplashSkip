@@ -17,7 +17,7 @@ final class BilibiliRules {
         matcher = new BilibiliVisualMatcher(load(context, R.drawable.bili_ad_cross, 32, 32),
                 load(context, R.drawable.bili_ad_menu, 32, 32), load(context, R.drawable.bili_sheet_handle, 48, 8),
                 load(context, R.drawable.bili_ad_label, 32, 20), load(context, R.drawable.bili_auto_live, 80, 16),
-                load(context, R.drawable.bili_live_cancel, 40, 20));
+                load(context, R.drawable.bili_live_cancel, 40, 20)).withAdGlyphs(InAppSceneRules.glyphs(context,R.drawable.generic_ad_glyphs));
     }
     static boolean ads(Context context) {
         SharedPreferences p = context.getSharedPreferences("settings", Context.MODE_PRIVATE);

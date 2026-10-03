@@ -49,7 +49,7 @@ final class AppDialog extends Dialog {
         close.setTextSize(23); close.setTextColor(MUTED);
         close.setContentDescription("关闭" + builder.title);
         close.setOnClickListener(v -> dismiss());
-        header.addView(close, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        if(builder.cancelable)header.addView(close, new LinearLayout.LayoutParams(dp(44), dp(44)));
         surface.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
         ScrollView bodyScroll = new ScrollView(getContext()) {
@@ -84,7 +84,8 @@ final class AppDialog extends Dialog {
         }
         if (!builder.actions.isEmpty()) surface.addView(actions, new LinearLayout.LayoutParams(-1, -2));
         setContentView(surface);
-        setCanceledOnTouchOutside(true);
+        setCancelable(builder.cancelable);
+        setCanceledOnTouchOutside(builder.cancelable);
         Window window = getWindow();
         if (window != null) {
             window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
@@ -128,11 +129,13 @@ final class AppDialog extends Dialog {
     static final class Builder {
         final Context context;
         String title = "", message;
+        boolean cancelable=true;
         View view;
         final Map<Integer, Action> actions = new LinkedHashMap<>();
         Builder(Context context) { this.context = context; }
         Builder setTitle(String value) { title = value; return this; }
         Builder setMessage(String value) { message = value; return this; }
+        Builder setCancelable(boolean value) { cancelable=value; return this; }
         Builder setView(View value) { view = value; return this; }
         Builder setNegativeButton(String label, DialogInterface.OnClickListener listener) { actions.put(BUTTON_NEGATIVE, new Action(label, listener)); return this; }
         Builder setNeutralButton(String label, DialogInterface.OnClickListener listener) { actions.put(BUTTON_NEUTRAL, new Action(label, listener)); return this; }

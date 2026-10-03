@@ -38,7 +38,7 @@ public final class ScreenshotRuleCheck {
         if (args.length < 3) throw new IllegalArgumentException("template-folder ad-screenshot live-screenshot [negative-screenshots...]");
         matcher = new BilibiliVisualMatcher(template(args[0], "bili_ad_cross", 32, 32), template(args[0], "bili_ad_menu", 32, 32),
                 template(args[0], "bili_sheet_handle", 48, 8), template(args[0], "bili_ad_label", 32, 20),
-                template(args[0], "bili_auto_live", 80, 16), template(args[0], "bili_live_cancel", 40, 20));
+                template(args[0], "bili_auto_live", 80, 16), template(args[0], "bili_live_cancel", 40, 20)).withAdGlyphs(SceneRuleCheck.glyphs(args[0],"generic_ad_glyphs"));
         BufferedImage ad = read(args[1]), live = read(args[2]);
         for (int width : new int[]{720, 1080, 1216, 1260}) {
             for (int i = 0; i < 2; i++) {

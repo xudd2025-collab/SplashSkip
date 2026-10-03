@@ -38,7 +38,9 @@ $vendorApiJar = Join-Path $vendor 'api-classes.jar'
 $shizukuJars = @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'third_party\shizuku') -Filter '*.jar' | ForEach-Object FullName)
 $localVendor = Join-Path $PSScriptRoot 'third_party\local-adb'
 $localJars = @(Get-ChildItem -LiteralPath $localVendor -Filter '*.jar' | ForEach-Object FullName)
-$compileClasspath = (@($androidJar, $vendorJar, $vendorApiJar) + $shizukuJars + $localJars) -join ';'
+$ocrVendor = Join-Path $PSScriptRoot 'third_party\onnxruntime'
+$ocrJar = Join-Path $ocrVendor 'classes.jar'
+$compileClasspath = (@($androidJar, $vendorJar, $vendorApiJar, $ocrJar) + $shizukuJars + $localJars) -join ';'
 New-Item -ItemType Directory -Path $build, $classes, $dex -Force | Out-Null
 
 & (Join-Path $tools 'aapt2.exe') compile --dir (Join-Path $source 'res') -o (Join-Path $build 'res.zip')
@@ -59,13 +61,15 @@ $javaFiles += @(Get-ChildItem -LiteralPath (Join-Path $build 'gen') -Filter '*.j
 if ($LASTEXITCODE -ne 0) { throw 'javac failed' }
 & (Join-Path $JavaHome 'bin\jar.exe') cf (Join-Path $build 'classes.jar') -C $classes .
 if ($LASTEXITCODE -ne 0) { throw 'jar failed' }
-& (Join-Path $tools 'd8.bat') --min-api 26 --lib $androidJar --output $dex (Join-Path $build 'classes.jar') $vendorJar $vendorApiJar @shizukuJars @localJars
+& (Join-Path $tools 'd8.bat') --min-api 26 --lib $androidJar --output $dex (Join-Path $build 'classes.jar') $vendorJar $vendorApiJar $ocrJar @shizukuJars @localJars
 if ($LASTEXITCODE -ne 0) { throw 'd8 failed' }
 & (Join-Path $JavaHome 'bin\jar.exe') uf (Join-Path $build 'unsigned.apk') -C $dex .
 if ($LASTEXITCODE -ne 0) { throw 'apk update failed' }
 $assets = Join-Path $build 'assets'
 New-Item -ItemType Directory -Path $assets -Force | Out-Null
 Copy-Item -Path (Join-Path $source 'assets\*') -Destination $assets -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'LICENSE') -Destination (Join-Path $assets 'project_license.txt') -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'NOTICE') -Destination (Join-Path $assets 'project_notice.txt') -Force
 $lib = Join-Path $build 'lib'
 foreach ($arch in Get-ChildItem -LiteralPath (Join-Path $vendor 'jni') -Directory) {
     $target = Join-Path $lib $arch.Name
@@ -73,6 +77,11 @@ foreach ($arch in Get-ChildItem -LiteralPath (Join-Path $vendor 'jni') -Director
     Copy-Item -LiteralPath (Join-Path $arch.FullName 'libtensorflowlite_jni.so') -Destination (Join-Path $target 'libtensorflowlite_jni.so') -Force
 }
 foreach ($arch in Get-ChildItem -LiteralPath (Join-Path $localVendor 'jni') -Directory) {
+    $target = Join-Path $lib $arch.Name
+    New-Item -ItemType Directory -Path $target -Force | Out-Null
+    Copy-Item -Path (Join-Path $arch.FullName '*.so') -Destination $target -Force
+}
+foreach ($arch in Get-ChildItem -LiteralPath (Join-Path $ocrVendor 'jni') -Directory) {
     $target = Join-Path $lib $arch.Name
     New-Item -ItemType Directory -Path $target -Force | Out-Null
     Copy-Item -Path (Join-Path $arch.FullName '*.so') -Destination $target -Force

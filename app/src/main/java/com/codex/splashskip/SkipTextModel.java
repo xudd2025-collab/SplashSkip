@@ -18,10 +18,15 @@ final class SkipTextModel implements AutoCloseable {
     private static final int HEIGHT = 20;
     private Interpreter interpreter;
     private NnApiDelegate delegate;
+    private final ByteBuffer source;
+    private final String assetName;
 
     SkipTextModel(Context context) throws Exception {
+        this(context,"skip_text.tflite");
+    }
+    SkipTextModel(Context context,String asset) throws Exception {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        try (InputStream stream = context.getAssets().open("skip_text.tflite")) {
+        try (InputStream stream = context.getAssets().open(asset)) {
             byte[] chunk = new byte[8192];
             int length;
             while ((length = stream.read(chunk)) != -1) bytes.write(chunk, 0, length);
@@ -29,12 +34,13 @@ final class SkipTextModel implements AutoCloseable {
         ByteBuffer model = ByteBuffer.allocateDirect(bytes.size()).order(ByteOrder.nativeOrder());
         model.put(bytes.toByteArray());
         model.rewind();
+        source=model;assetName=asset;
         if (Build.VERSION.SDK_INT >= 27) {
             try {
                 delegate = new NnApiDelegate();
                 interpreter = new Interpreter(model,
                         new Interpreter.Options().addDelegate(delegate).setNumThreads(1));
-                Log.i("SplashSkipModel", "NNAPI delegate attached; accelerator selection is unverified");
+                Log.i("SplashSkipModel", asset+": NNAPI delegate attached; accelerator selection is unverified");
             } catch (RuntimeException | LinkageError error) {
                 if (delegate != null) delegate.close();
                 delegate = null;
@@ -43,11 +49,14 @@ final class SkipTextModel implements AutoCloseable {
         }
         if (interpreter == null) {
             interpreter = new Interpreter(model, new Interpreter.Options().setNumThreads(1));
-            Log.i("SplashSkipModel", "CPU interpreter ready");
+            Log.i("SplashSkipModel", asset+": CPU interpreter ready");
         }
     }
 
     float probability(Bitmap screen, Rect region) {
+        return probability(screen,region,0);
+    }
+    float probability(Bitmap screen, Rect region,int classIndex) {
         if (region.left < 0 || region.top < 0 || region.right > screen.getWidth() ||
                 region.bottom > screen.getHeight() || region.isEmpty()) return 0f;
         Bitmap crop = Bitmap.createBitmap(screen, region.left, region.top,
@@ -74,9 +83,18 @@ final class SkipTextModel implements AutoCloseable {
             float normalized = (input[0][i] - mean) / scale;
             input[0][i] = Math.max(-3f, Math.min(3f, normalized));
         }
-        float[][] output = new float[1][1];
-        interpreter.run(input, output);
-        return output[0][0];
+        int count=interpreter.getOutputTensor(0).shape()[1];
+        if(classIndex<0 || classIndex>=count)return 0;
+        float[][] output = new float[1][count];
+        try { interpreter.run(input, output); }
+        catch(RuntimeException error) {
+            if(delegate==null)throw error;
+            interpreter.close();delegate.close();delegate=null;source.rewind();
+            interpreter=new Interpreter(source,new Interpreter.Options().setNumThreads(1));
+            Log.w("SplashSkipModel",assetName+": NNAPI execution failed, using CPU",error);
+            interpreter.run(input,output);
+        }
+        return output[0][classIndex];
     }
 
     @Override public void close() {

@@ -8,7 +8,7 @@ root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument('output', type=Path)
 args = parser.parse_args()
-allowed_roots = {'app', 'third_party', 'tools', '.github'}
+allowed_roots = {'app', 'third_party', 'tools', '.github', 'LICENSES'}
 allowed_files = {'README.md', 'PRIVACY.md', 'CONTRIBUTING.md', 'OPEN_SOURCE.md', 'RELEASE_NOTES.md',
                  'LICENSE', 'NOTICE', 'MAINTAINERS.md', '.gitignore', '.gitattributes', 'build.ps1', 'build.gradle', 'settings.gradle', 'version.properties'}
 excluded_parts = {'.git', '.build', '.gradle', 'build', 'private', 'captures', 'screenshots', 'diagnostics', '__pycache__'}

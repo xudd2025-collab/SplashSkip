@@ -126,15 +126,16 @@ def operator(b,opcode,inputs,outputs,activation=None):
         tflite.OperatorAddBuiltinOptions(b,opt)
     return tflite.OperatorEnd(b)
 
-def export(params,path):
+def export(params,path,description='Computer-trained skip text classifier'):
     w1,b1,w2,b2=params
+    outputs=w2.shape[1]
     b=flatbuffers.Builder(80000)
     # TFLite fully connected weights have shape [out, in].
     bufs=[buffer(b),buffer(b,w1.T),buffer(b,b1),buffer(b,w2.T),buffer(b,b2)]
     ts=[tensor(b,'input',[1,W*H],0),tensor(b,'w1',[HIDDEN,W*H],1),
         tensor(b,'b1',[HIDDEN],2),tensor(b,'hidden',[1,HIDDEN],0),
-        tensor(b,'w2',[1,HIDDEN],3),tensor(b,'b2',[1],4),
-        tensor(b,'logit',[1,1],0),tensor(b,'probability',[1,1],0)]
+        tensor(b,'w2',[outputs,HIDDEN],3),tensor(b,'b2',[outputs],4),
+        tensor(b,'logit',[1,outputs],0),tensor(b,'probability',[1,outputs],0)]
     ops=[operator(b,0,[0,1,2],[3],tflite.ActivationFunctionType.RELU),
          operator(b,0,[3,4,5],[6],tflite.ActivationFunctionType.NONE),
          operator(b,1,[6],[7])]
@@ -154,7 +155,7 @@ def export(params,path):
     cvs=ov(b,tflite.ModelStartOperatorCodesVector,codes)
     graphs=ov(b,tflite.ModelStartSubgraphsVector,[graph])
     bvs=ov(b,tflite.ModelStartBuffersVector,bufs)
-    desc=b.CreateString('Computer-trained skip text classifier')
+    desc=b.CreateString(description)
     tflite.ModelStart(b);tflite.ModelAddVersion(b,3)
     tflite.ModelAddOperatorCodes(b,cvs);tflite.ModelAddSubgraphs(b,graphs)
     tflite.ModelAddBuffers(b,bvs);tflite.ModelAddDescription(b,desc)

@@ -16,11 +16,21 @@ android {
     }
 
     sourceSets.main.java.srcDir '../third_party/local-adb/src'
-    sourceSets.main.jniLibs.srcDirs = ['../third_party/tensorflow-lite/jni', '../third_party/local-adb/jni']
+    sourceSets.main.jniLibs.srcDirs = ['../third_party/tensorflow-lite/jni', '../third_party/local-adb/jni', '../third_party/onnxruntime/jni']
 }
 
 dependencies {
+    implementation files('../third_party/onnxruntime/classes.jar')
     implementation files('../third_party/tensorflow-lite/classes.jar', '../third_party/tensorflow-lite/api-classes.jar')
     implementation fileTree(dir: '../third_party/shizuku', include: ['*.jar'])
     implementation fileTree(dir: '../third_party/local-adb', include: ['*.jar'])
 }
+
+def noticeAssets = layout.buildDirectory.dir('generated/project-notices')
+tasks.register('prepareProjectNotices', Copy) {
+    from(rootProject.file('LICENSE')) { rename { 'project_license.txt' } }
+    from(rootProject.file('NOTICE')) { rename { 'project_notice.txt' } }
+    into(noticeAssets)
+}
+android.sourceSets.main.assets.srcDir(noticeAssets)
+tasks.named('preBuild').configure { dependsOn('prepareProjectNotices') }

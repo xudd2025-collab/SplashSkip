@@ -8,6 +8,12 @@ import android.app.RemoteInput;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.database.ContentObserver;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -32,6 +38,9 @@ final class LocalAdbController {
     private long lastAttempt;
     private AdbMdns pairingDiscovery;
     private long pairingGeneration;
+    private Runnable wifiRecovery;
+    private int wifiRetries;
+    private volatile long wifiGeneration;
 
     static synchronized LocalAdbController get(Context context) {
         if (instance == null) instance = new LocalAdbController(context.getApplicationContext());
@@ -41,6 +50,7 @@ final class LocalAdbController {
         this.context = context;
         prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE);
         state(prefs.getBoolean("local_adb_paired", false) ? "授权已保存，点一键连接恢复" : "首次使用请在本应用配对本机");
+        watchWifi();
         handler.postDelayed(new Runnable() {
             @Override public void run() {
                 if (ready && !busy) {
@@ -61,26 +71,131 @@ final class LocalAdbController {
     boolean ready() { return ready; }
     boolean busy() { return busy; }
     boolean paired() { return prefs.getBoolean("local_adb_paired", false); }
+    boolean automaticWifi() { return prefs.getBoolean("local_adb_auto_wifi",false); }
+    boolean canEnableWireless() { return Build.VERSION.SDK_INT>=30 && context.checkSelfPermission("android.permission.WRITE_SECURE_SETTINGS")==PackageManager.PERMISSION_GRANTED; }
+    boolean wirelessEnabled() { return Build.VERSION.SDK_INT>=30 && Settings.Global.getInt(context.getContentResolver(),"adb_wifi_enabled",0)!=0; }
+    boolean wifiConnected() {
+        ConnectivityManager manager=context.getSystemService(ConnectivityManager.class);
+        try {for(Network network:manager.getAllNetworks()) {
+            NetworkCapabilities capabilities=manager.getNetworkCapabilities(network);
+            if(capabilities!=null && capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI))return true;
+        }} catch(Exception ignored) { }
+        return false;
+    }
+    void setAutomaticWifi(boolean value) {
+        if(Build.VERSION.SDK_INT<30 && value){autoState("自动无线调试需要 Android 11 或更新版本");return;}
+        prefs.edit().putBoolean("local_adb_auto_wifi",value).apply();
+        ++wifiGeneration;wifiRetries=0;
+        if(wifiRecovery!=null)handler.removeCallbacks(wifiRecovery);
+        if(value) {
+            autoState(!paired()?"先完成首次配对，之后自动连接":!wifiConnected()?"等待接入 Wi-Fi":"正在启用自动连接…");
+            scheduleWifiRecovery(0);
+        } else autoState("已关闭 Wi-Fi 自动连接");
+    }
+    private void watchWifi() {
+        if(Build.VERSION.SDK_INT<30)return;
+        try {
+            context.getSystemService(ConnectivityManager.class).registerNetworkCallback(
+                    new NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(),
+                    new ConnectivityManager.NetworkCallback() {
+                        @Override public void onAvailable(Network network) {handler.post(() -> {
+                            ++wifiGeneration;wifiRetries=0;
+                            if(automaticWifi()){autoState("Wi-Fi 已接入，准备自动恢复连接…");scheduleWifiRecovery(1500);}
+                        });}
+                        @Override public void onLost(Network network) {handler.post(() -> {
+                            if(wifiConnected())return;
+                            ++wifiGeneration;wifiRetries=0;
+                            if(wifiRecovery!=null)handler.removeCallbacks(wifiRecovery);
+                            if(automaticWifi())autoState("等待接入 Wi-Fi");
+                            disconnectIfUnavailable();
+                        });}
+                    });
+            context.getContentResolver().registerContentObserver(Settings.Global.getUriFor("adb_wifi_enabled"),false,
+                    new ContentObserver(handler) {@Override public void onChange(boolean selfChange) {
+                        if(!wirelessEnabled())disconnectIfUnavailable();
+                    }});
+        } catch(Exception error){autoState("系统未允许监听 Wi-Fi，可使用一键连接");Diagnostics.append(context,"Wi-Fi observer "+error.getClass().getSimpleName());}
+    }
+    private void scheduleWifiRecovery(long delay) {
+        if(wifiRecovery!=null)handler.removeCallbacks(wifiRecovery);
+        final long generation=wifiGeneration;
+        wifiRecovery=() -> {
+            if(generation!=wifiGeneration || !automaticWifi() || !paired() || !wifiConnected())return;
+            if(!wirelessEnabled() && !canEnableWireless()) {
+                autoState("先手动开启无线调试并连接一次，完成自动开启授权");return;
+            }
+            if(busy){scheduleWifiRecovery(1000);return;}
+            reconnect(true,true);
+        };
+        handler.postDelayed(wifiRecovery,delay);
+    }
+    private void disconnectIfUnavailable() {
+        if(wifiConnected() && wirelessEnabled())return;
+        ready=false;
+        state(wifiConnected()?"无线调试已关闭，可点一键恢复":"Wi-Fi 已断开，授权仍保存");
+        SensorGuardController.get(context).localLost();
+        worker.execute(() -> {if(!wifiConnected() || !wirelessEnabled())try{if(client!=null)client.disconnect();}catch(Exception ignored){}});
+    }
     private LocalAdbClient client() throws Exception {
         if (client == null) client = new LocalAdbClient(context);
         return client;
     }
     void reconnect(boolean explicit) {
+        reconnect(explicit,false);
+    }
+    private void reconnect(boolean explicit,boolean wifiEvent) {
         if ((!explicit && ready) || busy || (!explicit && (!paired() || SystemClock.elapsedRealtime() - lastAttempt < 30000))) return;
         if (!explicit && Build.VERSION.SDK_INT >= 30 &&
                 Settings.Global.getInt(context.getContentResolver(), "adb_wifi_enabled", 0) == 0) return;
         busy = true; lastAttempt = SystemClock.elapsedRealtime();
+        final long generation=wifiGeneration;
         worker.execute(() -> {
-            try { connectSavedOrDiscover(); }
-            catch (Exception | LinkageError error) { fail(error, "连接未成功：开启无线调试后重试，或手填连接端口"); }
-            finally { busy = false; }
+            boolean connected=false,attempted=false;
+            try {
+                if(wifiEvent && (generation!=wifiGeneration || !automaticWifi()))return;
+                attempted=true;
+                if(explicit)prepareWireless();connectSavedOrDiscover();connected=true;
+            }
+            catch (Exception | LinkageError error) { fail(error, !wifiConnected()?"请接入 Wi-Fi 后连接":
+                    !wirelessEnabled() && !canEnableWireless()?"尚无自动开启授权：手动打开无线调试并连接一次":"连接未成功：系统首次网络确认需手动允许，或手填连接端口"); }
+            finally {
+                busy = false;
+                if(connected)handler.post(() -> wifiRetries=0);
+                else if(attempted && automaticWifi() && wifiConnected() && wirelessEnabled())handler.post(() -> {
+                    if(++wifiRetries<=2)scheduleWifiRecovery(5000);
+                });
+            }
         });
+    }
+    private void prepareWireless() throws Exception {
+        if(Build.VERSION.SDK_INT<30)return;
+        if(!wifiConnected())throw new java.io.IOException("Wi-Fi unavailable");
+        if(wirelessEnabled())return;
+        if(!canEnableWireless())throw new SecurityException("WRITE_SECURE_SETTINGS not granted");
+        state("正在自动开启无线调试…");
+        if(!Settings.Global.putInt(context.getContentResolver(),"adb_wifi_enabled",1))throw new java.io.IOException("Wireless setting rejected");
+        Diagnostics.append(context,"wireless debugging enabled by app");
+        // Android starts its TLS service asynchronously after accepting the setting.
+        Thread.sleep(500);
+    }
+    private void authorizeAutomatic(LocalAdbClient adb) {
+        if(!automaticWifi() || Build.VERSION.SDK_INT<30)return;
+        try {
+            if(!canEnableWireless()) {
+                autoState("正在通过已配对的本机连接完成一次性授权…");
+                adb.shell("pm grant "+context.getPackageName()+" android.permission.WRITE_SECURE_SETTINGS",3500);
+                if(!canEnableWireless())throw new SecurityException("Automatic permission rejected");
+                Diagnostics.append(context,"Wi-Fi automatic settings permission granted through paired local ADB");
+            }
+            autoState("已授权 · 接入 Wi-Fi 后自动开启并重连");
+        } catch(Exception error){autoState("系统未允许自动开启授权，可手动开启后连接");Diagnostics.append(context,"automatic Wi-Fi grant "+error.getClass().getSimpleName());}
     }
     private void connectSavedOrDiscover() throws Exception {
         LocalAdbClient adb = client();
         if (ready) {
             try {
                 if (adb.shell("id -u", 2500).equals("2000")) {
+                    authorizeAutomatic(adb);
                     state("本机已连接 · 授权已保存 · 可拔掉 USB"); return;
                 }
             } catch (Exception ignored) { }
@@ -117,6 +232,7 @@ final class LocalAdbController {
         if (!uid.equals("2000") && !uid.equals("0")) { adb.disconnect(); throw new java.io.IOException("Not shell UID"); }
         prefs.edit().putBoolean("local_adb_paired", true).putInt("local_adb_port", port).apply();
         ready = true;
+        authorizeAutomatic(adb);
         state("本机已连接 · 授权已保存 · 可拔掉 USB");
         Diagnostics.append(context, "local ADB connected port=" + port + " uid=" + uid);
         handler.post(() -> SensorGuardController.get(context).localReady());
@@ -219,4 +335,5 @@ final class LocalAdbController {
         Diagnostics.append(context, "local ADB failed: " + error.getClass().getSimpleName() + " " + error.getMessage());
     }
     private void state(String message) { prefs.edit().putString("local_adb_status", message).apply(); }
+    private void autoState(String message) { prefs.edit().putString("local_adb_auto_status",message).apply(); }
 }

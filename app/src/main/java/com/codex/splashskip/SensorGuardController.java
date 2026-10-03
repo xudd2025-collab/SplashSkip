@@ -25,7 +25,7 @@ final class SensorGuardController {
     private final LocalSensorBackend localBackend;
     private volatile ISensorGuard remote;
     private boolean binding;
-    private String foreground = "";
+    private volatile String foreground = "";
     private String pendingPackage;
     private long pendingSince;
     private long statusGeneration;
@@ -40,7 +40,7 @@ final class SensorGuardController {
         local = LocalAdbController.get(context);
         localBackend = new LocalSensorBackend(local);
         args = new Shizuku.UserServiceArgs(new ComponentName(context, SensorGuardService.class))
-                .daemon(false).processNameSuffix("sensor_guard").version(1).debuggable(false);
+                .daemon(false).processNameSuffix("sensor_guard").version(2).debuggable(false);
         Shizuku.addBinderReceivedListenerSticky(this::connect);
         Shizuku.addBinderDeadListener(() -> {
             remote = null;
@@ -127,7 +127,8 @@ final class SensorGuardController {
     void foreground(String pkg) {
         if (pkg.equals(foreground)) return;
         foreground = pkg;
-        if (!enabled() || pkg.equals(context.getPackageName()) || pkg.contains("launcher")) return;
+        pendingPackage = null;
+        if (!enabled() || pkg.isEmpty() || pkg.equals(context.getPackageName()) || pkg.contains("launcher")) return;
         Boolean allowed = eligible.get(pkg);
         if (allowed == null) {
             try {
@@ -150,7 +151,7 @@ final class SensorGuardController {
             try {
                 ISensorGuard service = remote;
                 boolean useLocal = local.ready();
-                if (!enabled() || (!useLocal && service == null)) return;
+                if (!enabled() || !pkg.equals(foreground) || (!useLocal && service == null)) return;
                 String result = useLocal ? localBackend.protect(pkg, userId) : service.protect(pkg, userId);
                 Diagnostics.append(context, "sensor guard " + pkg + " " + result);
                 if (result.equals("already-active")) {
@@ -173,6 +174,7 @@ final class SensorGuardController {
                     }), 6500);
                 } else state("当前系统未接受传感器暂停：" + result);
             } catch (Exception error) {
+                Diagnostics.append(context, "sensor guard failed " + pkg + " " + error.getClass().getSimpleName() + " " + error.getMessage());
                 state("防摇一摇未生效：" + error.getClass().getSimpleName());
             }
         });

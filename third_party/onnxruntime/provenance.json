@@ -1,0 +1,12 @@
+{
+  "onnxruntime": "1.20.0",
+  "models": "PP-OCRv4, RapidOCR ONNXRuntime 1.4.4",
+  "sha256": {
+    "ui_text_det.onnx": "d2a7720d45a54257208b1e13e36a8479894cb74155a5efe29462512d42f49da9",
+    "ui_text_keys.txt": "b22996db93ffedffa90abf62009659af14ae22df06a2da5a1ce0e6fb1117af86",
+    "ui_text_rec.onnx": "48fc40f24f6d2a207a2b1091d3437eb3cc3eb6b676dc3ef9c37384005483683b",
+    "onnxruntime-android-1.20.0.aar": "07a8f71ef890afed8c6087a56220e6d558a492804276ee2dd7cb7f6262242027"
+  },
+  "user_images_used_for_training": false,
+  "runtime": "offline CPU, 2 threads"
+}
