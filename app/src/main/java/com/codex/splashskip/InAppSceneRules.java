@@ -5,6 +5,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 
 final class InAppSceneRules implements AutoCloseable {
+    private final Context modelContext;
     static final String HUYA = "com.duowan.kiwi";
     static final String TENCENT = "com.tencent.qqlive";
     static final String MOBILE = "com.greenpoint.android.mc10086.activity";
@@ -23,10 +24,11 @@ final class InAppSceneRules implements AutoCloseable {
     private final BilibiliVisualMatcher.Template[] skipWords;
     private long lastModelTrace;
     InAppSceneRules(Context context) {
+        modelContext=context.getApplicationContext();
         memory=RecentButtonMemory.get(context);
         uiText=new UiTextRecognizer(context);
         controlText=new ControlTextMatcher(controlGlyphs(context));
-        try {controlModel=new SkipTextModel(context,"control_text.tflite");}
+        if(RecognitionMode.visuals(context))try {controlModel=new SkipTextModel(context,"control_text.tflite");}
         catch(Exception | LinkageError error) {Diagnostics.append(context,"control text model unavailable: "+error.getClass().getSimpleName());}
         tencentFeed=new TencentFeedVisualMatcher(template(context,R.drawable.feed_download_text,64,20),template(context,R.drawable.feed_ad_text,32,20),template(context,R.drawable.feed_reason_title,112,20),template(context,R.drawable.feed_direct_close,64,20));
         mobile=new ChinaMobileVisualMatcher(template(context,R.drawable.mobile_prev_text,48,20),template(context,R.drawable.mobile_next_text,48,20));
@@ -57,7 +59,7 @@ final class InAppSceneRules implements AutoCloseable {
                 template(context,R.drawable.tencent_skip_bold,48,24),template(context,R.drawable.tencent_interactive_right,64,24),
                 template(context,R.drawable.tencent_flip_bold,80,24))
                 .withPreloadedLabel(template(context,R.drawable.tencent_preloaded_label,96,20)).withGlyphs(glyphs).withAdGlyphs(adGlyphs).withFeatures(features);
-        try { actionModel=new AdActionModel(context); }
+        if(RecognitionMode.visuals(context))try { actionModel=new AdActionModel(context); }
         catch(Exception | LinkageError error) {
             Diagnostics.append(context,"action model unavailable; verified scene rules remain active: "+error.getClass().getSimpleName());
         }
@@ -99,7 +101,13 @@ final class InAppSceneRules implements AutoCloseable {
         if(TencentFeedVisualMatcher.FEED.equals(rule) || TencentFeedVisualMatcher.DIRECT.equals(rule))return enabled(c,TENCENT) && option(c,"tencent_feed");
         return TencentVisualMatcher.VIDEO.equals(rule) && enabled(c,TENCENT) && option(c,"tencent_video");
     }
-    void prepareText(){uiText.prepare();}
+    void prepareText(){
+        if(controlModel==null)try{controlModel=new SkipTextModel(modelContext,"control_text.tflite");}
+        catch(Exception | LinkageError error){Diagnostics.append(modelContext,"control text model unavailable: "+error.getClass().getSimpleName());}
+        if(actionModel==null)try{actionModel=new AdActionModel(modelContext);}
+        catch(Exception | LinkageError error){Diagnostics.append(modelContext,"action model unavailable: "+error.getClass().getSimpleName());}
+        uiText.prepare();
+    }
     void beginTextScene(){uiText.newScene();}
     boolean verifyText(Bitmap screen,BilibiliVisualMatcher.Hit hit,java.util.function.BooleanSupplier cancelled,long budget){return uiText.verifyControl(screen,hit,cancelled,budget);}
     boolean textReady(){return uiText.ready();}
@@ -124,6 +132,21 @@ final class InAppSceneRules implements AutoCloseable {
             uiText.clearFrame();
             return nativeControl.hit(tree);
         }
+        // Huya cards can expire during a full OCR pass. Use the same current pixels
+        // for a bounded card proposal + local CTA/timer OCR + learned close scoring.
+        if(HUYA.equals(pkg) && option(c,"huya_ads") && uiText.ready() && actionModel!=null) {
+            long localDeadline=Math.min(deadline,android.os.SystemClock.uptimeMillis()+260);
+            java.util.function.BooleanSupplier localCancelled=()->cancelled.getAsBoolean() || android.os.SystemClock.uptimeMillis()>localDeadline;
+            UiFeatureSearch.setCancellation(localCancelled);
+            try {
+                BilibiliVisualMatcher.Frame local=new BilibiliVisualMatcher.Frame(pixels,w,h);
+                BilibiliVisualMatcher.Hit live=huya.findLive(local,true,(f,b)->uiText.readSceneRegion(f,b,localCancelled,Math.min(80,localDeadline-android.os.SystemClock.uptimeMillis())));
+                if(live!=null && !localCancelled.getAsBoolean()) {
+                    live=confirmScene(c,image,local,live);
+                    if(live!=null && !localCancelled.getAsBoolean()){uiText.sceneVerified();return live;}
+                }
+            } finally {UiFeatureSearch.setCancellation(null);}
+        }
         BilibiliVisualMatcher.Hit text=uiText.findTree(pixels,w,h,openingWindow,tree,cancelled,deadline-android.os.SystemClock.uptimeMillis());
         if(text==null && uiText.prefersFreshFrame())return null;
         if(text==null)text=uiText.find(pixels,w,h,openingWindow,cancelled,Math.min(700,deadline-android.os.SystemClock.uptimeMillis()));
@@ -145,6 +168,11 @@ final class InAppSceneRules implements AutoCloseable {
             if(hit!=null)return hit;
             return genericPages(c) && controlModel!=null?controlFrame(c,image,frame,bounded):null;
         } finally {UiFeatureSearch.setCancellation(null);}
+    }
+    boolean nativeAllowed(Context c,String pkg,String rule) {
+        if(!option(c,"enabled"))return false;
+        if(!AppProfiles.enabled(c))return UiControlPolicy.SKIP.equals(rule);
+        return textAllowed(c,pkg,rule);
     }
     private boolean textAllowed(Context c,String pkg,String rule) {
         if(!accepts(c,rule))return false;
@@ -188,6 +216,9 @@ final class InAppSceneRules implements AutoCloseable {
             if(hit==null && option(c,"tencent_feed"))hit=tencentFeed.find(frame);
         } else if(mobilePackage(pkg))hit=mobile.find(frame);
         else hit=openingWindow?universal.findLaunching(frame,classifier,UniversalSplashMatcher.SKIP,genericCancelled):universal.find(frame,classifier,UniversalSplashMatcher.SKIP,genericCancelled);
+        return confirmScene(c,image,frame,hit);
+    }
+    private BilibiliVisualMatcher.Hit confirmScene(Context c,Bitmap image,BilibiliVisualMatcher.Frame frame,BilibiliVisualMatcher.Hit hit) {
         if(hit==null || actionModel==null || TencentFeedVisualMatcher.DIRECT.equals(hit.rule))return hit;
         float probability=Float.isNaN(hit.modelProbability)?actionModel.probability(image,hit):hit.modelProbability;
         probability=Math.max(probability,actionModel.verifiedCrossProbability(frame,hit));

@@ -32,7 +32,71 @@ public final class DesktopCaptureProvider extends ContentProvider {
         Bundle reply=new Bundle();
         try {
             JSONObject result;
-            if("records".equals(method)) {
+            if("status".equals(method)) {
+                if(!getContext().getPackageName().equals(pkg))throw new IllegalArgumentException("Status only for this assistant");
+                android.content.SharedPreferences settings=getContext().getSharedPreferences("settings",android.content.Context.MODE_PRIVATE);
+                SkipService service=SkipService.desktopInstance();
+                result=new JSONObject().put("kind","status")
+                    .put("enabled",settings.getBoolean("enabled",true))
+                    .put("ai_enhanced",AppProfiles.enabled(getContext()))
+                    .put("visual_supplement",RecognitionMode.visuals(getContext()))
+                    .put("capture_click",settings.getBoolean("capture_click",false) && System.currentTimeMillis()<=settings.getLong("capture_until",0))
+                    .put("service_running",service!=null)
+                    .put("ocr_ready",SkipService.ocrReady())
+                    .put("native_bounds_auto",settings.getBoolean("native_bounds_auto",true))
+                    .put("bounds_records",NativeBoundsArchive.get(getContext()).recent().size())
+                    .put("screenshot_requests",service==null?-1:service.desktopScreenshotRequests());
+            } else if("native_frame".equals(method)) {
+                SkipService service=SkipService.desktopInstance();
+                SkipService.NativeDiagnostic frame=service==null?null:service.desktopNativeFrame(pkg);
+                if(frame==null)result=new JSONObject().put("kind","waiting");
+                else {
+                    JSONArray nodes=new JSONArray();ControlTree.Snapshot tree=frame.tree==null?frame.adScope:frame.tree;
+                    for(int i=0;frame.tree!=null && i<tree.nodes.size();i++) {
+                        ControlTree.Node node=tree.nodes.get(i);
+                        nodes.put(new JSONObject().put("index",i).put("parent",node.parent).put("child_count",node.children)
+                            .put("bounds",new JSONArray(node.box)).put("role",node.role).put("identity",node.identity).put("class",node.className).put("id",node.viewId)
+                            .put("clickable",node.clickable).put("visible",node.visible).put("label",frame.labels.get(i)));
+                    }
+                    result=new JSONObject().put("kind","native-frame").put("package",tree.pkg).put("width",tree.width).put("height",tree.height)
+                        .put("global_read",frame.tree!=null)
+                        .put("tree_uptime",frame.tree==null?JSONObject.NULL:tree.time)
+                        .put("frame_age",frame.tree==null?JSONObject.NULL:SystemClock.uptimeMillis()-tree.time)
+                        .put("tree_complete",frame.tree!=null && tree.complete)
+                        .put("opening",frame.opening).put("window",frame.window).put("result",frame.reason).put("tree_nodes",nodes)
+                        .put("verified_aliases",frame.verifiedAliases).put("alias_parents",new JSONArray(frame.aliasParents))
+                        .put("truncation_reasons",new JSONArray(frame.traversalReasons)).put("duplicates",frame.duplicates)
+                        .put("node_errors",frame.errors).put("missing_children",frame.missingChildren)
+                        .put("duplicate_kinds",new JSONObject(frame.duplicateKinds)).put("duplicate_edges",new JSONArray(frame.duplicateEdges));
+                    if(frame.adScope!=null) {
+                        JSONArray scopeNodes=new JSONArray();ControlTree.Snapshot scope=frame.adScope;
+                        for(int i=0;i<scope.nodes.size();i++) {
+                            ControlTree.Node node=scope.nodes.get(i);
+                            scopeNodes.put(new JSONObject().put("index",i).put("parent",node.parent).put("child_count",node.children)
+                                .put("bounds",new JSONArray(node.box)).put("role",node.role).put("identity",node.identity).put("class",node.className).put("id",node.viewId)
+                                .put("clickable",node.clickable).put("visible",node.visible));
+                        }
+                        result.put("ad_scope",new JSONObject().put("independent",true).put("complete",scope.complete)
+                            .put("tree_uptime",scope.time).put("frame_age",SystemClock.uptimeMillis()-scope.time)
+                            .put("tree_nodes",scopeNodes));
+                    }
+                }
+            } else if("bounds_records".equals(method)) {
+                List<JSONObject> all=new ArrayList<>();
+                for(JSONObject summary:NativeBoundsArchive.get(getContext()).recent())if(pkg.equals(summary.optString("package")))all.add(summary);
+                int offset=extras==null?0:extras.getInt("offset",0);
+                if(offset<0 || offset>64)throw new IllegalArgumentException("Invalid bounds offset");
+                JSONArray frames=new JSONArray();int next=offset,bytes=0;
+                for(;next<all.size()&&frames.length()<6;next++) {
+                    JSONObject frame=NativeBoundsArchive.get(getContext()).frame(all.get(next).optString("id"));
+                    if(frame==null)continue;
+                    int size=frame.toString().getBytes(StandardCharsets.UTF_8).length;
+                    if(bytes+size>256*1024&&frames.length()>0)break;
+                    frames.put(frame);bytes+=size;
+                }
+                result=new JSONObject().put("schema",1).put("kind","bounds-records").put("frames",frames)
+                    .put("next_offset",next<all.size()?next:-1).put("total",all.size());
+            } else if("records".equals(method)) {
                 List<JSONObject> all=new ArrayList<>();
                 for(JSONObject r:JointLearningStore.get(getContext()).recent())if(pkg.equals(r.optString("package")))all.add(r);
                 int offset=extras==null?0:extras.getInt("offset",0);
@@ -74,7 +138,7 @@ public final class DesktopCaptureProvider extends ContentProvider {
         for(AccessibilityWindowInfo window:all){
             AccessibilityNodeInfo root=null;
             try {
-                root=window.getRoot();
+                root=AccessibilityControlTree.fetchWindowRoot(window);
                 if(root==null){unavailableRoots++;continue;}
                 if(pkg.equals(text(root.getPackageName())) && windows.add(window.getId())){
                     roots.add(root);root=null;
@@ -82,8 +146,7 @@ public final class DesktopCaptureProvider extends ContentProvider {
                 }
             }finally{if(root!=null)root.recycle();window.recycle();}
         }
-        AccessibilityNodeInfo active=android.os.Build.VERSION.SDK_INT>=33?
-            service.getRootInActiveWindow(AccessibilityNodeInfo.FLAG_PREFETCH_DESCENDANTS_BREADTH_FIRST):service.getRootInActiveWindow();
+        AccessibilityNodeInfo active=AccessibilityControlTree.fetchActiveRoot(service);
         boolean activeOwner=active!=null&&pkg.equals(text(active.getPackageName()));
         if(activeOwner&&windows.add(active.getWindowId())){roots.add(active);active=null;}
         if(active!=null)active.recycle();
@@ -110,7 +173,7 @@ public final class DesktopCaptureProvider extends ContentProvider {
         int[] captured=new int[nodes.length()];
         for(int i=0;i<nodes.length();i++){int p=nodes.getJSONObject(i).getInt("parent");if(p>=0)captured[p]++;}
         for(int i=0;i<nodes.length();i++)nodes.getJSONObject(i).put("captured_children",captured[i]);
-        AccessibilityNodeInfo check=service.getRootInActiveWindow();boolean owner=check!=null&&pkg.equals(text(check.getPackageName()));if(check!=null)check.recycle();
+        AccessibilityNodeInfo check=AccessibilityControlTree.fetchActiveRoot(service);boolean owner=check!=null&&pkg.equals(text(check.getPackageName()));if(check!=null)check.recycle();
         return new JSONObject().put("kind",activeOwner&&!owner?"owner-changed":"frame").put("package",pkg)
             .put("width",size.x).put("height",size.y).put("started_uptime",start).put("tree_uptime",SystemClock.uptimeMillis())
             .put("wall_time",System.currentTimeMillis()).put("tree_complete",reasons.isEmpty()).put("tree_nodes",nodes)

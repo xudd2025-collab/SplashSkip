@@ -5,7 +5,9 @@
     [string]$OutputDirectory = '',
     [int]$Seconds = 12,
     [switch]$Launch,
-    [switch]$NoVisual
+    [switch]$NoVisual,
+    [switch]$TreeOnly,
+    [string]$PythonPath = 'python'
 )
 $ErrorActionPreference = 'Stop'
 $project = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
@@ -16,7 +18,7 @@ if (-not $AdbPath) {
     elseif ($env:ANDROID_SDK_ROOT) { $AdbPath = Join-Path $env:ANDROID_SDK_ROOT 'platform-tools/adb.exe' }
 }
 if (-not $AdbPath -or -not (Test-Path -LiteralPath $AdbPath)) { throw '请用 -AdbPath 指定 adb.exe 的路径。' }
-if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot '.build/collector.jar'))) {
+if (-not $TreeOnly -and -not (Test-Path -LiteralPath (Join-Path $PSScriptRoot '.build/collector.jar'))) {
     throw '尚未构建临时采集桥，请先运行本目录 build.ps1。'
 }
 if (-not $Serial) {
@@ -30,12 +32,16 @@ if (-not $OutputDirectory) {
 $captureArguments = @((Join-Path $PSScriptRoot 'capture_stream.py'), '--adb', $AdbPath, '--serial', $Serial,
     '--package', $Package, '--output', $OutputDirectory, '--seconds', $Seconds)
 if ($Launch) { $captureArguments += '--launch' }
-Write-Host '正在从电脑采集；默认不重启应用。截图和父子控件保存在电脑。'
-& python @captureArguments
+if ($TreeOnly) {
+    if ($Launch) { throw '纯控件检查直接读取已打开的页面，不使用 -Launch。' }
+    $captureArguments += '--tree-only'
+    Write-Host '正在抓取当前原生控件边框和父子关系；不请求截图。'
+} else { Write-Host '正在从电脑采集；默认不重启应用。截图和父子控件保存在电脑。' }
+& $PythonPath @captureArguments
 if ($LASTEXITCODE -ne 0) { throw '采集未完成，查看输出目录中的 session.json / stderr.txt。' }
-if (-not $NoVisual) {
+if (-not $NoVisual -and -not $TreeOnly) {
     Write-Host '正在电脑上补充视觉节点；视觉包含关系会与原生父子关系分开显示。'
-    & python (Join-Path $PSScriptRoot 'augment_visual.py') $OutputDirectory
+    & $PythonPath (Join-Path $PSScriptRoot 'augment_visual.py') $OutputDirectory
     if ($LASTEXITCODE -ne 0) { Write-Warning '视觉补充未完成，原始控件树仍可查看。' }
 }
 $page = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) 'inspect.html'

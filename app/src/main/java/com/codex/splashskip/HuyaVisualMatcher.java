@@ -4,6 +4,7 @@ import static com.codex.splashskip.BilibiliVisualMatcher.*;
 
 /** Each landscape target requires its own neighbouring scene features. */
 final class HuyaVisualMatcher {
+    interface Reader { UiControlPolicy.Word read(Frame frame,int[] bounds); }
     static final String AD = "huya-landscape-ad-close";
     static final String SPLASH = "huya-splash-skip";
     static final String GAME_AD = "huya-game-ad-close", FISH = "huya-fish-panel-close";
@@ -25,6 +26,85 @@ final class HuyaVisualMatcher {
     }
     Hit find(Frame f, boolean enabled) {
         return find(f, enabled, enabled);
+    }
+    /** Short-lived live-room cards are recognized locally before full-screen OCR.
+     * The current CTA anchors the card; only its own close glyph is returned. */
+    Hit findLive(Frame source,boolean ads,Reader reader) {
+        if(!ads || reader==null || UiFeatureSearch.cancelled())return null;
+        Frame f=source.width==608?source:new Frame(source.pixels,source.originalWidth,source.originalHeight,608);
+        Frame fine=null;
+        for(int[] b:VisualComponents.boxes(f,1,1,f.width-1,f.height-1,VisualComponents.BLUE,80)) {
+            int w=b[2]-b[0],h=b[3]-b[1];
+            if(w<f.width*.08f || w>f.width*.60f || h<8 || w<h*2.3f || w>h*9f || b[4]<w*h*.65f)continue;
+            int[] text=lightText(f,b[0]+2,b[1]+1,b[2]-2,b[3]-1);
+            if(text==null || text[2]-text[0]<h || text[2]-text[0]>w*.85f)continue;
+            UiControlPolicy.Word action=reader.read(f,text);
+            if(!promotionalAction(action))continue;
+            if(UiFeatureSearch.cancelled())return null;
+            if(fine==null)fine=new Frame(f.pixels,f.originalWidth,f.originalHeight,1216);
+            int[] button={b[0]*2,b[1]*2,b[2]*2,b[3]*2};
+            Hit hit=imageCard(fine,button,action.confidence);
+            if(hit==null && f.width>f.height)hit=countdownCard(fine,button,action.confidence,reader);
+            if(hit!=null)return hit;
+        }
+        return null;
+    }
+    static boolean promotionalAction(UiControlPolicy.Word word) {
+        if(word==null || word.confidence<.96f || word.weakest<.90f)return false;
+        return UiControlPolicy.normalized(word.text).matches("立即玩|立即下载|下载游戏|立即安装");
+    }
+    static boolean countdownSeconds(UiControlPolicy.Word word) {
+        return word!=null && word.confidence>=.96f && word.weakest>=.90f &&
+                UiControlPolicy.normalized(word.text).matches("[0-9]{1,2}(?:s|秒)");
+    }
+    private int[] lightText(Frame f,int l,int t,int r,int b) {
+        int left=r,top=b,right=l,bottom=t,count=0;
+        for(int[] part:VisualComponents.boxes(f,l,t,r,b,VisualComponents.WHITE,3)) {
+            if(part[3]-part[1]<3)continue;
+            left=Math.min(left,part[0]);top=Math.min(top,part[1]);right=Math.max(right,part[2]);bottom=Math.max(bottom,part[3]);count+=part[4];
+        }
+        return count<12 || bottom-top<4?null:new int[]{left-2,top-2,right+2,bottom+2};
+    }
+    private Hit imageCard(Frame f,int[] action,float label) {
+        int aw=action[2]-action[0];
+        for(int[] panel:VisualComponents.boxes(f,action[0]-aw/3,action[1]-aw*3,action[2]+aw/3,action[3]+aw/2,VisualComponents.WHITE,400)) {
+            int w=panel[2]-panel[0],h=panel[3]-panel[1];
+            if(aw<w*.60f || aw>w*.96f || h<w*.85f || h>w*2.4f ||
+                    action[0]<=panel[0] || action[2]>=panel[2] || action[1]<panel[1]+h*.62f || action[3]>=panel[3])continue;
+            int edges=0;
+            for(int i=6;i<10;i++) {
+                if(grayAt(f,panel[0]+3,panel[1]+h*i/10f)>=236)edges++;
+                if(grayAt(f,panel[2]-4,panel[1]+h*i/10f)>=236)edges++;
+            }
+            if(edges<7)continue;
+            // The white frame must surround the image, not merely a text footer.
+            int topEdge=0;for(int i=1;i<10;i++) {
+                boolean white=false;for(int dy=0;dy<4;dy++)white|=grayAt(f,panel[0]+w*i/10f,panel[1]+dy)>=236;
+                if(white)topEdge++;
+            }
+            if(topEdge<7)continue;
+            for(int[] glyph:VisualComponents.boxes(f,panel[0]+(int)(w*.70f),panel[1]+3,panel[2]-3,panel[1]+(int)(h*.20f),VisualComponents.LIGHT,7)) {
+                int gw=glyph[2]-glyph[0];if(gw<w*.035f || gw>w*.15f)continue;
+                float score=VisualComponents.cross(f,glyph,true);if(score<.78f)continue;
+                float x=(glyph[0]+glyph[2]-1)/2f,y=(glyph[1]+glyph[3]-1)/2f;
+                float scale=Math.max(.5f,Math.min(2f,1.4f*gw/22f));
+                return f.hit(f.height>=f.width?PORTRAIT_AD:AD,x,y,Math.min(score,label)).withCropScale(scale);
+            }
+        }
+        return null;
+    }
+    private Hit countdownCard(Frame f,int[] action,float label,Reader reader) {
+        float aw=action[2]-action[0],ax=(action[0]+action[2])/2f,ay=(action[1]+action[3])/2f;
+        float[] header=UiFeatureSearch.find(f,promoHeader,action[0]-aw*.15f,ay-aw*1.5f,ax,ay-aw*.50f,.82f);
+        if(header==null)return null;
+        float[] close=UiFeatureSearch.find(f,closeText,ax,header[1]-closeText.height,action[2]+aw*.1f,header[1]+closeText.height,.86f);
+        if(close==null)return null;
+        // Read the changing seconds separately from the translucent divider.
+        // Close is independently verified by both its glyph and the action model.
+        int[] timer=lightText(f,(int)(close[0]-closeText.width*2.5f),(int)(close[1]-closeText.height*.85f),
+                (int)(close[0]-closeText.width*.70f),(int)(close[1]+closeText.height*.85f));
+        if(timer==null || timer[0]<action[0] || timer[2]>close[0]-closeText.width*.60f || !countdownSeconds(reader.read(f,timer)))return null;
+        return f.hit(GAME_AD,close[0],close[1],Math.min(label,Math.min(header[2],close[2])));
     }
     Hit find(Frame f, boolean ads, boolean fish) {
         if(!ads && !fish || UiFeatureSearch.cancelled())return null;

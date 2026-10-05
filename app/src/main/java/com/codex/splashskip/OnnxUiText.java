@@ -174,7 +174,9 @@ final class OnnxUiText implements AutoCloseable {
                 }
                 detected=System.nanoTime();detectionDone=true;count=boxes.size();
                 // Actual detected text boxes everywhere on screen; button padding determines priority, not position.
-                boxes.sort((a,b) -> Float.compare(priority(pixels,width,height,b),priority(pixels,width,height,a)));
+                Map<int[],Float> priorities=new IdentityHashMap<>();
+                for(int[] box:boxes)priorities.put(box,priority(pixels,width,height,box));
+                boxes.sort((a,b) -> Float.compare(priorities.get(b),priorities.get(a)));
                 for(int offset=0;offset<boxes.size() && offset<64;) {
                     if(cancelled.getAsBoolean() || System.nanoTime()>deadline)return result(null,words,"deadline",count,started,detected);
                     // Short controls should not wait for a large padded batch of creative text.
@@ -241,7 +243,11 @@ final class OnnxUiText implements AutoCloseable {
     private static float contextPriority(int[] box,UiControlPolicy.Word anchor) {
         float height=box[3]-box[1],ratio=(box[2]-box[0])/height;
         float rowDistance=Math.abs((box[1]+box[3])/2f-anchor.y())/Math.max(height,anchor.height());
-        return (rowDistance<1.5f?10:0)+(ratio>=6 && ratio<=22?4:ratio>=2.4f && ratio<=5.5f?3:0)-Math.min(3,rowDistance*.01f);
+        // Compact disclosures (ad badge / motion prompt) can be anywhere. Read
+        // these before long product copy; rank only, all semantic gates remain.
+        float compact=ratio>=.7f && ratio<=5.5f?6:ratio<=22?2:0;
+        float similarSize=height<=anchor.height()*1.8f?1:0;
+        return (rowDistance<1.5f?10:0)+compact+similarSize-Math.min(3,rowDistance*.01f);
     }
     private static List<int[]> boxes(FloatBuffer output,int w,int h,int originalW,int originalH) {
         return boxes(output,w,h,originalW,originalH,.09f);

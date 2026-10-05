@@ -28,12 +28,29 @@ final class UiControlPolicy {
     }
     static String action(String text) {
         String s=normalized(text);
-        if(s.matches("(?:[0-9]{1,2}(?:秒|s)?[|·:]?)?(?:跳过|skip)(?:[|·:]?[0-9]{1,2}(?:秒|s)?)?"))return SKIP;
-        if(s.equals("关闭广告"))return CLOSE_AD;
+        if(s.equals("跳过广告") || s.matches("(?:[0-9]{1,2}(?:秒|s)?[|·:]?)?(?:跳过|skip)(?:[|·:]?[0-9]{1,2}(?:秒|s)?)?"))return SKIP;
+        if(s.equals("关闭广告") || s.equals("关闭广告，放大暂停画面") ||
+                s.equals("关闭广告,放大暂停画面"))return CLOSE_AD;
         if(s.equals("关闭"))return CLOSE;
         return "";
     }
     static boolean isControl(String rule) {return SKIP.equals(rule)||CLOSE.equals(rule)||CLOSE_AD.equals(rule);}
+    static boolean explicitSkipAd(String text) {
+        return text!=null && normalized(text).equals("跳过广告");
+    }
+    /** A complete disclosure field, never a gesture hint or free-form marketing text. */
+    static boolean navigationDisclosure(String text) {
+        if(text==null)return false;
+        String s=normalized(text);
+        return s.matches("(?:点击|互动)?跳转(?:至)?详情页(?:面)?或第三方应用[>›]?") ||
+                s.matches("(?:点击)?下载或(?:跳转(?:至)?|打开)第三方应用[>›]?");
+    }
+    /** One field must independently contain explicit Skip and one countdown. */
+    static boolean explicitSkipCountdown(String text) {
+        if(text==null)return false;
+        String s=normalized(text);
+        return s.matches("(?:[0-9]{1,2}(?:秒|s)?[|·:]?(?:跳过|skip)|(?:跳过|skip)[|·:]?[0-9]{1,2}(?:秒|s)?)");
+    }
     static boolean adMark(Word word) {
         if(word.confidence<.96f || word.weakest<.90f)return false;
         String s=normalized(word.text);
@@ -43,7 +60,7 @@ final class UiControlPolicy {
         if(word.confidence<.96f || word.weakest<.90f)return false;
         String s=normalized(word.text);
         return s.equals("翻转手机") || s.equals("摇动手机") || s.equals("摇一摇") || s.equals("摇一摇手机") || s.equals("扭动手机") ||
-                s.matches("(?:点击)?跳转(?:至)?详情页(?:面)?或第三方应用[>›]?" );
+                navigationDisclosure(word.text);
     }
     static Hit find(int[] pixels,int width,int height,List<Word> words,boolean opening) {
         return find(pixels,width,height,words,opening,java.util.Collections.emptyList());

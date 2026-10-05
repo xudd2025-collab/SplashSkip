@@ -9,7 +9,12 @@ import java.util.*;
 public final class UiTextCheck {
     static OnnxUiText.Result run(OnnxUiText engine,BufferedImage im,boolean opening)throws Exception {
         int w=im.getWidth(),h=im.getHeight();long start=System.nanoTime();
+        engine.resetResolution();
         OnnxUiText.Result result=engine.find(im.getRGB(0,0,w,h,null,0,w),w,h,opening,()->false,4000);
+        // The phone re-acquires after a needs-detail result. Static fixtures are
+        // unchanged across those frames, but must exercise the same bounded retry.
+        for(int frame=1;frame<3 && result.status.equals("needs-detail");frame++)
+            result=engine.find(im.getRGB(0,0,w,h,null,0,w),w,h,opening,()->false,4000);
         System.out.println("OCR status="+result.status+" detected="+result.boxes+" det="+result.detectMs+" rec="+result.recognizeMs+" total="+(System.nanoTime()-start)/1000000+"ms");
         for(UiControlPolicy.Word word:result.words)System.out.printf("  %s %.5f/%.5f %d,%d,%d,%d action=%s button=%s%n",word.text,word.confidence,word.weakest,word.left,word.top,word.right,word.bottom,UiControlPolicy.action(word.text),UiControlPolicy.buttonBoundary(im.getRGB(0,0,w,h,null,0,w),w,h,word));
         return result;
@@ -49,6 +54,9 @@ public final class UiTextCheck {
             no("ordinary close without advertisement",engine,synthetic("关闭","消息提醒",300,500,false));
             no("skip control without advertisement context",engine,synthetic("跳过","欢迎使用",300,500,false));
             yes("destination disclosure supplies ad context",engine,synthetic("跳过","点击跳转详情页面或第三方应用",500,800,false),UiControlPolicy.SKIP,500,800);
+            yes("download or external jump disclosure",engine,synthetic("跳过","下载或跳转第三方应用",500,800,false),UiControlPolicy.SKIP,500,800);
+            yes("download or external open disclosure",engine,synthetic("跳过","点击下载或打开第三方应用",500,800,false),UiControlPolicy.SKIP,500,800);
+            no("generic download text is not an ad disclosure",engine,synthetic("跳过","下载应用",500,800,false));
             no("ordinary navigation text is not an ad disclosure",engine,synthetic("跳过","跳转设置",500,800,false));
             no("partial third party text is not an ad disclosure",engine,synthetic("跳过","第三方应用",500,800,false));
             no("normal page with an unrelated ad",engine,synthetic("关闭","广告",300,500,true));

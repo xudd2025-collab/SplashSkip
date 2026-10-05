@@ -6,6 +6,10 @@ import java.util.regex.Pattern;
 
 /** Public release source and version rules; no account tokens are needed in the APK. */
 final class UpdatePolicy {
+    static final long FOREGROUND_CHECK_INTERVAL_MS=30_000L;
+    static boolean checkOnForeground(boolean enabled,boolean busy,long now,long lastAttempt) {
+        return enabled && !busy && (lastAttempt<=0 || now<lastAttempt || now-lastAttempt>=FOREGROUND_CHECK_INTERVAL_MS);
+    }
     static String repository(String input) {
         String value = input.trim();
         if (value.isEmpty()) return "";

@@ -6,6 +6,8 @@ import android.content.Context;
 import android.net.nsd.NsdManager;
 import android.net.nsd.NsdServiceInfo;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -21,6 +23,9 @@ import java.net.NetworkInterface;
 import java.net.ServerSocket;
 import java.net.SocketException;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.Objects;
 
 /**
@@ -61,6 +66,11 @@ public class AdbMdns {
     private boolean mRunning;
     @Nullable
     private String mServiceName;
+    private final Map<String, Long> mLiveServices = new HashMap<>();
+    private final Map<String, PendingResolve> mPendingResolves = new LinkedHashMap<>();
+    private PendingResolve mResolving;
+    private long mResolveVersion;
+    private final Handler mResolveHandler = new Handler(Looper.getMainLooper());
 
     public AdbMdns(@NonNull Context context, @ServiceType @NonNull String serviceType,
                    @NonNull OnAdbDaemonDiscoveredListener portChangeListener) {
@@ -71,7 +81,7 @@ public class AdbMdns {
         mDiscoveryListener = new DiscoveryListener(this);
     }
 
-    public void start() {
+    public synchronized void start() {
         if (mRunning) return;
         mRunning = true;
         if (!mRegistered) {
@@ -79,38 +89,87 @@ public class AdbMdns {
         }
     }
 
-    public void stop() {
+    public synchronized void stop() {
         if (!mRunning) return;
         mRunning = false;
+        mLiveServices.clear();
+        mPendingResolves.clear();
+        mServiceName = null;
         if (mRegistered) {
             mNsdManager.stopServiceDiscovery(mDiscoveryListener);
         }
     }
 
-    public boolean isRunning() {
+    public synchronized boolean isRunning() {
         return mRunning;
     }
 
-    private void onDiscoveryStart() {
+    private synchronized void onDiscoveryStart() {
         mRegistered = true;
+        // stop() may run while Android is still registering this listener.
+        if (!mRunning) mNsdManager.stopServiceDiscovery(mDiscoveryListener);
     }
 
-    private void onDiscoverStop() {
+    private synchronized void onDiscoverStop() {
         mRegistered = false;
+        mLiveServices.clear();
+        mPendingResolves.clear();
+        mServiceName = null;
     }
 
-    private void onServiceFound(NsdServiceInfo serviceInfo) {
-        mNsdManager.resolveService(serviceInfo, new ResolveListener(this));
+    private synchronized void onServiceFound(NsdServiceInfo serviceInfo) {
+        if (!mRunning) return;
+        long version = ++mResolveVersion;
+        mLiveServices.put(serviceInfo.getServiceName(), version);
+        mPendingResolves.put(serviceInfo.getServiceName(), new PendingResolve(serviceInfo, version));
+        resolveNext();
     }
 
-    private void onServiceLost(NsdServiceInfo serviceInfo) {
+    private synchronized void resolveNext() {
+        if (!mRunning || mResolving != null || mPendingResolves.isEmpty()) return;
+        String name = mPendingResolves.keySet().iterator().next();
+        PendingResolve request = mPendingResolves.remove(name);
+        mResolving = request;
+        // Legacy NSD allows only one outstanding resolve. Queue the latest found
+        // version instead of issuing a parallel resolve that can be rejected.
+        try { mNsdManager.resolveService(request.info, new ResolveListener(this, request)); }
+        catch (RuntimeException unavailable) { finishResolve(request); }
+    }
+
+    private synchronized void finishResolve(PendingResolve request) {
+        if (mResolving != request) return;
+        mResolving = null;
+        resolveNext();
+    }
+
+    private synchronized void resolveFailed(PendingResolve request, int error) {
+        if (error == NsdManager.FAILURE_ALREADY_ACTIVE && request.retries < 5 && mRunning
+                && Objects.equals(mLiveServices.get(request.info.getServiceName()), request.version)) {
+            long delay = 250L << request.retries++;
+            mResolveHandler.postDelayed(() -> retryResolve(request), delay);
+        }
+        finishResolve(request);
+    }
+
+    private synchronized void retryResolve(PendingResolve request) {
+        String name = request.info.getServiceName();
+        if (!mRunning || !Objects.equals(mLiveServices.get(name), request.version)) return;
+        mPendingResolves.put(name, request);
+        resolveNext();
+    }
+
+    private synchronized void onServiceLost(NsdServiceInfo serviceInfo) {
+        if (!mRunning) return;
+        mLiveServices.remove(serviceInfo.getServiceName());
+        mPendingResolves.remove(serviceInfo.getServiceName());
         if (mServiceName != null && mServiceName.equals(serviceInfo.getServiceName())) {
+            mServiceName = null;
             mAdbDaemonDiscoveredListener.onPortChanged(serviceInfo.getHost(), -1);
         }
     }
 
-    private void onServiceResolved(NsdServiceInfo serviceInfo) {
-        if (!mRunning) return;
+    private synchronized void onServiceResolved(NsdServiceInfo serviceInfo, long version) {
+        if (!mRunning || !Objects.equals(mLiveServices.get(serviceInfo.getServiceName()), version)) return;
         try {
             for (NetworkInterface networkInterface : Collections.list(NetworkInterface.getNetworkInterfaces())) {
                 for (InetAddress inetAddress : Collections.list(networkInterface.getInetAddresses())) {
@@ -119,6 +178,7 @@ public class AdbMdns {
                             && isPortAvailable(serviceInfo.getPort())) {
                         mServiceName = serviceInfo.getServiceName();
                         mAdbDaemonDiscoveredListener.onPortChanged(serviceInfo.getHost(), serviceInfo.getPort());
+                        return;
                     }
                 }
             }
@@ -176,18 +236,29 @@ public class AdbMdns {
     private static class ResolveListener implements NsdManager.ResolveListener {
         @NonNull
         private final AdbMdns mAdbMdns;
+        private final PendingResolve mRequest;
 
-        private ResolveListener(@NonNull AdbMdns adbMdns) {
+        private ResolveListener(@NonNull AdbMdns adbMdns, PendingResolve request) {
             mAdbMdns = adbMdns;
+            mRequest = request;
         }
 
         @Override
         public void onResolveFailed(NsdServiceInfo serviceInfo, int errorCode) {
+            mAdbMdns.resolveFailed(mRequest, errorCode);
         }
 
         @Override
         public void onServiceResolved(NsdServiceInfo serviceInfo) {
-            mAdbMdns.onServiceResolved(serviceInfo);
+            try { mAdbMdns.onServiceResolved(serviceInfo, mRequest.version); }
+            finally { mAdbMdns.finishResolve(mRequest); }
         }
+    }
+
+    private static class PendingResolve {
+        private final NsdServiceInfo info;
+        private final long version;
+        private int retries;
+        private PendingResolve(NsdServiceInfo value, long generation) { info = value; version = generation; }
     }
 }

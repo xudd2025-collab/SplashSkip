@@ -48,6 +48,28 @@ public final class SceneExecutionCheck {
         require(!SceneFramePolicy.leftScene("video.app","background.app","video.app"),"background event cannot reset click guard");
         require(!SceneFramePolicy.leftScene("video.app","com.android.systemui","com.android.systemui"),"transient system overlay cannot reset click guard");
         require(!SceneFramePolicy.leftScene("video.app","video.app","video.app"),"in-app content change cannot reset click guard");
+        require(SceneFramePolicy.idleNativeCloseProbe("com.youku.phone",true,true,false,10000,8000),
+                "idle foreground Youku can discover a late pause close without content events");
+        require(!SceneFramePolicy.idleNativeCloseProbe("other.app",true,true,false,10000,8000),
+                "idle probe is limited to the observed video app");
+        require(!SceneFramePolicy.idleNativeCloseProbe("com.youku.phone",false,true,false,10000,8000),
+                "disabled ad close cannot start an idle probe");
+        require(!SceneFramePolicy.idleNativeCloseProbe("com.youku.phone",true,false,false,10000,8000),
+                "active burst cannot schedule a second idle worker");
+        require(!SceneFramePolicy.idleNativeCloseProbe("com.youku.phone",true,true,true,10000,8000),
+                "pending scan action or verification prevents an idle probe");
+        require(!SceneFramePolicy.idleNativeCloseProbe("com.youku.phone",true,true,false,9499,8000) &&
+                SceneFramePolicy.idleNativeCloseProbe("com.youku.phone",true,true,false,9500,8000) &&
+                !SceneFramePolicy.idleNativeCloseProbe("com.youku.phone",true,true,false,7999,8000),
+                "idle scans are bounded by spacing and cannot use a future frame time");
+        require(SceneFramePolicy.pageCloseMayReappear(UiControlPolicy.CLOSE_AD,NativeTreeObservation.GONE),
+                "confirmed gone page close permits a later pause ad at the same place");
+        require(!SceneFramePolicy.pageCloseMayReappear(UiControlPolicy.CLOSE_AD,NativeTreeObservation.PRESENT) &&
+                !SceneFramePolicy.pageCloseMayReappear(UiControlPolicy.CLOSE_AD,NativeTreeObservation.UNKNOWN),
+                "present or unknown controls retain repeat-click protection");
+        require(!SceneFramePolicy.pageCloseMayReappear(UiControlPolicy.SKIP,NativeTreeObservation.GONE) &&
+                !SceneFramePolicy.pageCloseMayReappear(UiControlPolicy.CLOSE,NativeTreeObservation.GONE),
+                "a later page ad cannot clear splash action protection");
         NativeTreeBackoff backoff=new NativeTreeBackoff();
         backoff.observed(30,false,100);require(!backoff.shouldRead(450,false),"first timeout reserves next frame for OCR");
         require(backoff.shouldRead(1000,false),"first timeout has bounded native retry");
@@ -57,6 +79,32 @@ public final class SceneExecutionCheck {
         backoff.observed(80,true,2900);require(backoff.shouldRead(2901,false),"complete tree restores normal reads");
         NativeTreeBackoff loading=new NativeTreeBackoff();loading.observed(0,false,100);loading.observed(0,false,300);
         require(loading.shouldRead(301,false),"empty loading window does not delay future native controls");
+        NativeTreeBackoff priority=new NativeTreeBackoff();
+        require(priority.globalReadBudget(1000,true)==40,"priority native discovery starts with a short hint read");
+        require(priority.globalReadBudget(1599,true)==40,"priority hint budget remains short before 600 ms");
+        require(priority.globalReadBudget(1600,true)==200,"priority native discovery preserves a full read at the 600 ms boundary");
+        require(priority.globalReadBudget(1601,true)==40 && priority.globalReadBudget(2199,true)==40,
+                "a full priority read starts a new bounded short-read interval");
+        require(priority.globalReadBudget(2200,true)==200,"priority discovery continues periodic full reads when queries never expose a control");
+        require(priority.globalReadBudget(2100,true)==40 && priority.globalReadBudget(2699,true)==40 &&
+                priority.globalReadBudget(2700,true)==200,"backward time resets the priority anchor without starving a later full read");
+        NativeTreeBackoff zeroStart=new NativeTreeBackoff();
+        require(zeroStart.globalReadBudget(0,true)==40 && zeroStart.globalReadBudget(599,true)==40 &&
+                zeroStart.globalReadBudget(600,true)==200,"a zero uptime origin still records the first priority anchor");
+        NativeTreeBackoff delayed=new NativeTreeBackoff();
+        require(delayed.globalReadBudget(1000,true)==40 && delayed.globalReadBudget(3400,true)==200 &&
+                delayed.globalReadBudget(3401,true)==40 && delayed.globalReadBudget(4000,true)==200,
+                "a delayed full read reanchors at its actual time instead of scheduling catch-up full reads");
+        NativeTreeBackoff ordinary=new NativeTreeBackoff();
+        require(ordinary.globalReadBudget(100,false)==200 && ordinary.globalReadBudget(1000,false)==200 &&
+                ordinary.globalReadBudget(2000,true)==40,"ordinary native reads always retain 200 ms and do not start a priority interval");
+        require(ordinary.globalReadBudget(2200,false)==200 && ordinary.globalReadBudget(2599,true)==40 &&
+                ordinary.globalReadBudget(2600,true)==200,"ordinary reads do not postpone the bounded priority full-read deadline");
+        NativeTreeBackoff budgetAfterObservation=new NativeTreeBackoff();
+        require(budgetAfterObservation.globalReadBudget(1000,true)==40,"priority budget records its initial scheduling anchor");
+        budgetAfterObservation.observed(0,false,1100);budgetAfterObservation.observed(80,true,1500);
+        require(budgetAfterObservation.globalReadBudget(1599,true)==40 && budgetAfterObservation.globalReadBudget(1600,true)==200,
+                "empty or complete observations cannot reset the periodic global candidate opportunity");
         require(SceneFramePolicy.deferFallback(true,"needs-detail"),"unfinished opening OCR takes fresh pixels before legacy page search");
         require(!SceneFramePolicy.deferFallback(false,"needs-detail"),"in-app page close rules remain available");
         require(!SceneFramePolicy.deferFallback(true,"no-verified-control"),"completed OCR miss still permits legacy fallback");

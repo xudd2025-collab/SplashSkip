@@ -54,6 +54,17 @@ final class UiTextRecognizer implements AutoCloseable {
         catch(Exception | LinkageError error){Diagnostics.append(context,"current control recheck failed: "+error.getClass().getSimpleName());return false;}
     }
     void clearFrame(){last=null;error="frame-not-processed";}
+    void sceneVerified(){last=null;preferFreshFrame=false;error="local-scene-verified";}
+    UiControlPolicy.Word readSceneRegion(Frame frame,int[] bounds,BooleanSupplier cancelled,long budget) {
+        if(!ready || engine==null || budget<=0 || cancelled.getAsBoolean())return null;
+        float scale=frame.originalWidth/(float)frame.width;
+        int l=Math.max(0,Math.round(bounds[0]*scale)),t=Math.max(0,Math.round(bounds[1]*scale));
+        int r=Math.min(frame.originalWidth,Math.round(bounds[2]*scale)),b=Math.min(frame.originalHeight,Math.round(bounds[3]*scale));
+        int w=r-l,h=b-t;if(w<1 || h<1)return null;
+        int[] crop=new int[w*h];for(int y=0;y<h;y++)System.arraycopy(frame.pixels,(t+y)*frame.originalWidth+l,crop,y*w,w);
+        try{return engine.readRegion(crop,w,h,cancelled,budget);}
+        catch(Exception | LinkageError error){Diagnostics.append(context,"local scene text deferred: "+error.getClass().getSimpleName());return null;}
+    }
     Hit findTree(int[] pixels,int width,int height,boolean opening,ControlTree.Snapshot tree,BooleanSupplier cancelled,long budget) {
         preferFreshFrame=false;
         if(!ready || tree==null)return null;
@@ -113,6 +124,7 @@ final class UiTextRecognizer implements AutoCloseable {
     }
     String summary() {
         if(!ready)return "离线文字识别尚未就绪；旧规则可继续工作";
+        if(last==null && error.equals("local-scene-verified"))return "已识别推广卡片的关闭按钮";
         if(last==null)return "本帧未进入文字识别，等待新画面";
         String status=last.status.equals("tree-verified")?"控件树与视觉已共同确认":last.status.equals("verified")?"已找到广告控件":last.status.equals("needs-detail")?"快速扫描完成，继续检查细小文字":last.status.equals("deadline")?"识别超时，等待新画面":last.status.equals("cancelled")?"画面已变化，停止本帧识别":"未发现可信广告控件";
         return "离线文字识别："+status+" · "+(last.detectMs+last.recognizeMs)+" ms";

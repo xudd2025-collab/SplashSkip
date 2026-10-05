@@ -2,6 +2,14 @@ package com.codex.splashskip;
 
 /** Timing rules used by the live service; kept independent of Android for execution-path regression checks. */
 final class SceneFramePolicy {
+    /** Recheck late Youku pause controls from the existing foreground poll only. */
+    static boolean idleNativeCloseProbe(String pkg,boolean closeEnabled,boolean idle,boolean busy,long now,long lastFrame) {
+        return "com.youku.phone".equals(pkg) && closeEnabled && idle && !busy &&
+            now>=lastFrame && now-lastFrame>=1500;
+    }
+    static boolean pageCloseMayReappear(String rule,int observed) {
+        return UiControlPolicy.CLOSE_AD.equals(rule) && observed==NativeTreeObservation.GONE;
+    }
     static boolean deferFallback(boolean opening,String textStatus) {
         // The coarse pass requested fresh pixels for detail. Searching the same
         // loading image with page rules delays the next frame without resolving it.

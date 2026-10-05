@@ -37,6 +37,7 @@ final class UpdateChecker {
     private static final String OFFICIAL_REPOSITORY = "xudd2025-collab/SplashSkip";
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final AtomicBoolean busy = new AtomicBoolean();
+    private volatile boolean closed;
     private final Handler handler = new Handler(Looper.getMainLooper());
     UpdateChecker(Context context) {
         prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE);
@@ -59,9 +60,11 @@ final class UpdateChecker {
     void check(String installed, Callback callback) {
         final String repo = repository();
         final String[] routes=UpdateSources.metadata(prefs.getBoolean("update_acceleration",true));
-        if (!busy.compareAndSet(false, true)) return;
+        if (closed || !busy.compareAndSet(false, true)) return;
+        prefs.edit().putLong("update_attempted_at",System.currentTimeMillis()).apply();
         worker.execute(() -> {
             Result result;
+            JSONObject cacheToSave=null;
             try {
                 Result fetched=null;
                 for(int attempt=1;attempt<=3;attempt++) {
@@ -70,9 +73,8 @@ final class UpdateChecker {
                 }
                 result=fetched;
                 if(result!=null && !result.version.isEmpty()) {
-                    JSONObject cached=new JSONObject().put("version",result.version).put("notes",result.notes).put("releaseUrl",result.releaseUrl)
+                    cacheToSave=new JSONObject().put("version",result.version).put("notes",result.notes).put("releaseUrl",result.releaseUrl)
                             .put("apkUrl",result.apkUrl).put("sha256",result.sha256).put("size",result.size).put("apiUrl",result.apiUrl);
-                    prefs.edit().putString("update_cache",cached.toString()).putLong("update_cache_at",System.currentTimeMillis()).apply();
                 }
             }
             catch (Exception error) {
@@ -89,9 +91,9 @@ final class UpdateChecker {
                     }
                 } catch(Exception ignored) { }
             }
-            prefs.edit().putString("update_status", result.message).putLong("update_checked_at", System.currentTimeMillis()).apply();
+            if(!storeResult(result,cacheToSave))return;
             final Result delivered = result;
-            handler.post(() -> { busy.set(false); callback.complete(delivered); });
+            handler.post(() -> { busy.set(false); if(!closed)callback.complete(delivered); });
         });
     }
     private Result fetch(String repo, String installed,String route) throws Exception {
@@ -136,7 +138,14 @@ final class UpdateChecker {
         while ((count = input.read(bytes)) != -1) { if (out.size() + count > limit) throw new IllegalArgumentException("更新响应过大"); out.write(bytes, 0, count); }
         return out.toString("UTF-8");
     }
-    void close() { worker.shutdown(); }
+    private synchronized boolean storeResult(Result result,JSONObject cache) {
+        if(closed)return false;
+        long now=System.currentTimeMillis();
+        SharedPreferences.Editor edit=prefs.edit().putString("update_status",result.message).putLong("update_checked_at",now);
+        if(cache!=null)edit.putString("update_cache",cache.toString()).putLong("update_cache_at",now).putLong("update_success_at",now);
+        edit.apply();return true;
+    }
+    synchronized void close() { closed=true;busy.set(false);worker.shutdownNow(); }
     private static String validatedApi(String value) {
         return value.matches("https://api\\.github\\.com/repos/xudd2025-collab/SplashSkip/releases/assets/[1-9][0-9]*")?value:"";
     }

@@ -14,13 +14,32 @@ final class ControlTree {
     }
     static final class Node {
         final int parent,children; final int[] box; final boolean clickable;
-        final String role,identity;final boolean visible;
+        final String role,identity,className,viewId;final boolean visible,skipCountdown,explicitSkipAd,navigationDisclosure;
+        // Nullable properties keep older diagnostic snapshots honest about missing information.
+        final Boolean enabled,declaredClickable,onScreen;
         Node(int parent,int children,int[] box,boolean clickable,String role,String identity) {
             this(parent,children,box,clickable,role,identity,true);
         }
         Node(int parent,int children,int[] box,boolean clickable,String role,String identity,boolean visible) {
+            this(parent,children,box,clickable,role,identity,visible,"","");
+        }
+        Node(int parent,int children,int[] box,boolean clickable,String role,String identity,boolean visible,String className,String viewId) {
+            this(parent,children,box,clickable,role,identity,visible,className,viewId,false);
+        }
+        Node(int parent,int children,int[] box,boolean clickable,String role,String identity,boolean visible,String className,String viewId,boolean skipCountdown) {
+            this(parent,children,box,clickable,role,identity,visible,className,viewId,skipCountdown,null,null,null);
+        }
+        Node(int parent,int children,int[] box,boolean clickable,String role,String identity,boolean visible,String className,String viewId,
+                boolean skipCountdown,Boolean enabled,Boolean declaredClickable,Boolean onScreen) {
+            this(parent,children,box,clickable,role,identity,visible,className,viewId,skipCountdown,enabled,declaredClickable,onScreen,false,false);
+        }
+        Node(int parent,int children,int[] box,boolean clickable,String role,String identity,boolean visible,String className,String viewId,
+                boolean skipCountdown,Boolean enabled,Boolean declaredClickable,Boolean onScreen,boolean explicitSkipAd,boolean navigationDisclosure) {
             this.parent=parent;this.children=children;this.box=box.clone();this.clickable=clickable;
             this.role=role;this.identity=identity;this.visible=visible;
+            this.className=className==null?"":className;this.viewId=viewId==null?"":viewId;
+            this.skipCountdown=skipCountdown;this.enabled=enabled;this.declaredClickable=declaredClickable;this.onScreen=onScreen;
+            this.explicitSkipAd=explicitSkipAd;this.navigationDisclosure=navigationDisclosure;
         }
     }
     static final class Hint {
@@ -43,6 +62,11 @@ final class ControlTree {
         }
         boolean current(String owner,long generation,long now,int w,int h) {
             return pkg.equals(owner) && epoch==generation && now>=time && now-time<=250 && width==w && height==h;
+        }
+        /** After an uncached complete current scope/edges, or independent per-node refresh. */
+        boolean currentVerifiedScope(String owner,long generation,long now,int w,int h,long verificationStarted) {
+            return complete && verificationStarted>=time && pkg.equals(owner) && epoch==generation &&
+                now>=verificationStarted && now-verificationStarted<=250 && width==w && height==h;
         }
         List<Hint> controls(Map<String,String> learned) {
             List<Hint> result=new ArrayList<>();

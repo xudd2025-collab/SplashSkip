@@ -14,6 +14,7 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -28,6 +29,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 final class LocalAdbController {
     private static final int PAIR_NOTIFICATION = 702;
+    private static final int PAIR_SUCCESS_NOTIFICATION = 704;
     private static LocalAdbController instance;
     private final Context context;
     private final SharedPreferences prefs;
@@ -38,6 +40,7 @@ final class LocalAdbController {
     private long lastAttempt;
     private AdbMdns pairingDiscovery;
     private long pairingGeneration;
+    private final PairingSession pairingSession = new PairingSession();
     private Runnable wifiRecovery;
     private int wifiRetries;
     private volatile long wifiGeneration;
@@ -49,6 +52,9 @@ final class LocalAdbController {
     private LocalAdbController(Context context) {
         this.context = context;
         prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE);
+        // A process restart cannot restore the system's short-lived pairing window.
+        prefs.edit().remove("local_pair_port").remove("local_pair_seen").apply();
+        context.getSystemService(NotificationManager.class).cancel(PAIR_NOTIFICATION);
         state(prefs.getBoolean("local_adb_paired", false) ? "授权已保存，点一键连接恢复" : "首次使用请在本应用配对本机");
         watchWifi();
         handler.postDelayed(new Runnable() {
@@ -73,7 +79,28 @@ final class LocalAdbController {
     boolean paired() { return prefs.getBoolean("local_adb_paired", false); }
     boolean automaticWifi() { return prefs.getBoolean("local_adb_auto_wifi",false); }
     boolean canEnableWireless() { return Build.VERSION.SDK_INT>=30 && context.checkSelfPermission("android.permission.WRITE_SECURE_SETTINGS")==PackageManager.PERMISSION_GRANTED; }
-    boolean wirelessEnabled() { return Build.VERSION.SDK_INT>=30 && Settings.Global.getInt(context.getContentResolver(),"adb_wifi_enabled",0)!=0; }
+    int wirelessState() {
+        if(Build.VERSION.SDK_INT<30)return -1;
+        try {return Settings.Global.getInt(context.getContentResolver(),"adb_wifi_enabled")!=0?1:0;}
+        catch(Settings.SettingNotFoundException | SecurityException unavailable){return -1;}
+    }
+    boolean wirelessEnabled() { return wirelessState()==1; }
+    String wirelessSummary() {
+        int current=wirelessState();
+        return current==1?"系统无线调试：已开启":current==0?"系统无线调试：未开启":"系统无线调试：状态暂无法读取";
+    }
+    String wirelessSettingsHint(boolean pairing,boolean developerPage) {
+        int current=wirelessState();
+        String start=current==1?"无线调试已开启；":current==0?"请开启系统“无线调试”；":"请确认系统“无线调试”开关；";
+        if(pairing)return start+(developerPage?"点击“无线调试”文字进入详情，再打开“使用配对码配对设备”":"打开“使用配对码配对设备”");
+        return start+"返回助手即可恢复已保存的授权；授权已撤销时需重新配对";
+    }
+    private String pairingWaitStatus() {
+        int current=wirelessState();
+        return current==1?"无线调试已开启，等待打开系统配对码窗口（3 分钟）":
+                current==0?"等待开启系统无线调试，再打开“使用配对码配对设备”（3 分钟）":
+                "等待系统配对码窗口；检测到本机端口后显示输入通知（3 分钟）";
+    }
     boolean wifiConnected() {
         ConnectivityManager manager=context.getSystemService(ConnectivityManager.class);
         try {for(Network network:manager.getAllNetworks()) {
@@ -112,7 +139,8 @@ final class LocalAdbController {
                     });
             context.getContentResolver().registerContentObserver(Settings.Global.getUriFor("adb_wifi_enabled"),false,
                     new ContentObserver(handler) {@Override public void onChange(boolean selfChange) {
-                        if(!wirelessEnabled())disconnectIfUnavailable();
+                        if(wirelessState()==0)disconnectIfUnavailable();
+                        if(pairingDiscovery!=null && prefs.getInt("local_pair_port",0)==0)state(pairingWaitStatus());
                     }});
         } catch(Exception error){autoState("系统未允许监听 Wi-Fi，可使用一键连接");Diagnostics.append(context,"Wi-Fi observer "+error.getClass().getSimpleName());}
     }
@@ -250,34 +278,53 @@ final class LocalAdbController {
     }
     void pair(int port, String code) {
         if (busy) return;
-        if (!code.matches("[0-9]{6}") || port < 1 || port > 65535) {
+        if (code == null || !code.matches("[0-9]{6}") || port < 1 || port > 65535) {
             state("请输入有效的 6 位配对码和配对端口"); return;
         }
         busy = true;
         stopPairingDiscovery();
         worker.execute(() -> {
+            boolean pairingAdded = false;
             try {
                 state("正在与本机配对…");
+                Diagnostics.append(context, "local ADB pairing submitted port=" + port);
                 if (!client().pair("127.0.0.1", port, code)) throw new java.io.IOException("Pairing rejected");
                 prefs.edit().putBoolean("local_adb_paired", true).apply();
+                pairingAdded = true;
                 state("配对成功，正在连接…");
                 Diagnostics.append(context, "local ADB paired; key saved privately");
                 connectSavedOrDiscover();
             } catch (Exception | LinkageError error) {
                 fail(error, paired() ? "授权已保存；请点一键连接或手填连接端口" : "配对失败：保持系统配对码窗口打开，使用当前配对端口和配对码");
-            } finally { busy = false; }
+            } finally {
+                busy = false;
+                if (pairingAdded) {
+                    final boolean connected = ready;
+                    handler.post(() -> pairingSuccessNotification(connected));
+                }
+            }
         });
     }
     void startPairingDiscovery() {
         if (Build.VERSION.SDK_INT < 30) { state("Android 11 以下请使用已授权的 Shizuku 连接"); return; }
+        if (busy) return;
         stopPairingDiscovery();
+        context.getSystemService(NotificationManager.class).cancel(PAIR_SUCCESS_NOTIFICATION);
         long generation = ++pairingGeneration;
-        state("等待系统配对码窗口；检测到本机端口后会显示输入通知（3 分钟）");
+        pairingSession.begin(SystemClock.elapsedRealtime());
+        state(pairingWaitStatus());
         pairingDiscovery = new AdbMdns(context, AdbMdns.SERVICE_TYPE_TLS_PAIRING, (address, port) -> {
-            if (port < 1) return;
             handler.post(() -> {
                 if (generation != pairingGeneration) return;
+                if(port<1) {
+                    pairingSession.lost();
+                    prefs.edit().remove("local_pair_port").remove("local_pair_seen").apply();
+                    context.getSystemService(NotificationManager.class).cancel(PAIR_NOTIFICATION);
+                    state("系统配对码窗口已关闭；请重新打开“使用配对码配对设备”");return;
+                }
+                if (!pairingSession.update(port, SystemClock.elapsedRealtime())) return;
                 prefs.edit().putInt("local_pair_port", port).putLong("local_pair_seen", System.currentTimeMillis()).apply();
+                Diagnostics.append(context, "local ADB pairing endpoint discovered port=" + port);
                 state("已找到本机配对端口 " + port + "，下拉通知输入系统配对码");
                 pairNotification(port);
             });
@@ -287,34 +334,54 @@ final class LocalAdbController {
             if (generation != pairingGeneration) return;
             stopPairingDiscovery();
             state("本次配对等待已结束；可重新开始，或分屏手填配对端口");
-        }, 180000);
+        }, PairingSession.TIMEOUT_MS);
     }
-    void pairFromNotification(String code) {
-        int port = prefs.getInt("local_pair_port", 0);
-        if (System.currentTimeMillis() - prefs.getLong("local_pair_seen", 0) > 180000 || port < 1) {
-            state("配对端口已过期，请重新打开系统配对码窗口"); return;
+    void pairFromNotification(String code, int port, String token) {
+        if (busy) return;
+        if (!pairingSession.accepts(port, token, SystemClock.elapsedRealtime())) {
+            Diagnostics.append(context, "local ADB stale pairing reply rejected port=" + port);
+            state("这条配对通知已过期；请重新开始配对，并使用新窗口的配对码"); return;
         }
-        pair(port, code.trim());
+        pair(port, code == null ? null : code.trim());
     }
     private void pairNotification(int port) {
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         manager.createNotificationChannel(new NotificationChannel("local_pair", "本机配对", NotificationManager.IMPORTANCE_HIGH));
-        Intent intent = new Intent(context, PairingReceiver.class).setAction("com.codex.splashskip.PAIR");
+        String token = pairingSession.token();
+        Intent intent = new Intent(context, PairingReceiver.class).setAction("com.codex.splashskip.PAIR")
+                .setData(Uri.parse("splashskip://pair/" + token + "/" + port))
+                .putExtra("pair_port", port).putExtra("pair_session", token);
         PendingIntent reply = PendingIntent.getBroadcast(context, 702, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0));
         Notification.Action action = new Notification.Action.Builder(android.R.drawable.ic_lock_lock, "输入配对码", reply)
                 .addRemoteInput(new RemoteInput.Builder("pair_code").setLabel("系统显示的 6 位配对码").build()).build();
         PendingIntent open = PendingIntent.getActivity(context, 703, new Intent(context, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
         try {
+            // Updating a replied notification can retain the previous code in SystemUI.
+            // Replace it when the endpoint changes so the editor starts empty.
+            manager.cancel(PAIR_NOTIFICATION);
             manager.notify(PAIR_NOTIFICATION, new Notification.Builder(context, "local_pair")
                     .setSmallIcon(android.R.drawable.ic_lock_lock).setContentTitle("开屏助手 · 输入本机配对码")
                     .setContentText("端口 " + port + " · 保持系统配对码窗口打开").addAction(action)
-                    .setContentIntent(open).setOnlyAlertOnce(true).setTimeoutAfter(180000).build());
+                    .setContentIntent(open).setOnlyAlertOnce(true).setTimeoutAfter(PairingSession.TIMEOUT_MS).build());
         } catch (SecurityException error) { state("请允许通知，或用分屏手填配对码"); }
+    }
+    private void pairingSuccessNotification(boolean connected) {
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        manager.createNotificationChannel(new NotificationChannel("local_pair", "本机配对", NotificationManager.IMPORTANCE_HIGH));
+        PendingIntent open = PendingIntent.getActivity(context, 703, new Intent(context, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
+        try {
+            manager.notify(PAIR_SUCCESS_NOTIFICATION, new Notification.Builder(context, "local_pair")
+                    .setSmallIcon(android.R.drawable.ic_lock_lock).setContentTitle("开屏助手 · 添加成功")
+                    .setContentText(connected ? "本机已连接，配对授权已保存" : "配对授权已保存；连接暂未成功，可返回助手恢复")
+                    .setContentIntent(open).setAutoCancel(true).build());
+        } catch (SecurityException error) { Diagnostics.append(context, "local ADB success notification unavailable"); }
     }
     void stopPairingDiscovery() {
         ++pairingGeneration;
+        pairingSession.clear();
         if (pairingDiscovery != null) { pairingDiscovery.stop(); pairingDiscovery = null; }
+        prefs.edit().remove("local_pair_port").remove("local_pair_seen").apply();
         context.getSystemService(NotificationManager.class).cancel(PAIR_NOTIFICATION);
     }
     synchronized String shell(String command, int timeoutMs) throws Exception {

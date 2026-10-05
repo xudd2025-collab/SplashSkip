@@ -12,6 +12,11 @@ if (-not $SdkPath -or -not (Test-Path -LiteralPath $SdkPath)) {
 if (-not $JavaHome -or -not (Test-Path -LiteralPath $JavaHome)) {
     throw 'Set JAVA_HOME or pass -JavaHome to a JDK 17 directory.'
 }
+$SdkPath = (Resolve-Path -LiteralPath $SdkPath).Path
+$JavaHome = (Resolve-Path -LiteralPath $JavaHome).Path
+if ($SigningKey) { $SigningKey = (Resolve-Path -LiteralPath $SigningKey).Path }
+Push-Location -LiteralPath $PSScriptRoot
+try {
 $env:JAVA_HOME = $JavaHome
 $tools = Join-Path $SdkPath 'build-tools\36.0.0'
 $androidJar = Join-Path $SdkPath 'platforms\android-36\android.jar'
@@ -43,15 +48,17 @@ $ocrJar = Join-Path $ocrVendor 'classes.jar'
 $compileClasspath = (@($androidJar, $vendorJar, $vendorApiJar, $ocrJar) + $shizukuJars + $localJars) -join ';'
 New-Item -ItemType Directory -Path $build, $classes, $dex -Force | Out-Null
 
-& (Join-Path $tools 'aapt2.exe') compile --dir (Join-Path $source 'res') -o (Join-Path $build 'res.zip')
+# Native SDK tools on Windows may fail on non-ASCII absolute project paths.
+# Relative arguments keep the native file names portable from the project root.
+& (Join-Path $tools 'aapt2.exe') compile --dir 'app/src/main/res' -o '.build/res.zip'
 if ($LASTEXITCODE -ne 0) { throw 'aapt2 compile failed' }
-& (Join-Path $tools 'aapt2.exe') link -o (Join-Path $build 'unsigned.apk') -I $androidJar --manifest (Join-Path $source 'AndroidManifest.xml') --java (Join-Path $build 'gen') --min-sdk-version 26 --target-sdk-version 35 --version-code $releaseVersion.versionCode --version-name $releaseVersion.versionName (Join-Path $build 'res.zip')
+& (Join-Path $tools 'aapt2.exe') link -o '.build/unsigned.apk' -I $androidJar --manifest 'app/src/main/AndroidManifest.xml' --java '.build/gen' --min-sdk-version 26 --target-sdk-version 35 --version-code $releaseVersion.versionCode --version-name $releaseVersion.versionName '.build/res.zip'
 if ($LASTEXITCODE -ne 0) { throw 'aapt2 link failed' }
 
 $aidlSource = Join-Path $source 'aidl'
 $aidlGen = Join-Path $build 'aidl'
 New-Item -ItemType Directory -Path $aidlGen -Force | Out-Null
-& (Join-Path $tools 'aidl.exe') "-I$aidlSource" "-o$aidlGen" (Join-Path $aidlSource 'com\codex\splashskip\ISensorGuard.aidl')
+& (Join-Path $tools 'aidl.exe') '-Iapp\src\main\aidl' '-o.build\aidl' 'app\src\main\aidl\com\codex\splashskip\ISensorGuard.aidl'
 if ($LASTEXITCODE -ne 0) { throw 'aidl failed' }
 $javaFiles = @(Get-ChildItem -LiteralPath (Join-Path $source 'java') -Filter '*.java' -Recurse | ForEach-Object FullName)
 $javaFiles += @(Get-ChildItem -LiteralPath (Join-Path $localVendor 'src') -Filter '*.java' -Recurse | ForEach-Object FullName)
@@ -88,7 +95,7 @@ foreach ($arch in Get-ChildItem -LiteralPath (Join-Path $ocrVendor 'jni') -Direc
 }
 & (Join-Path $JavaHome 'bin\jar.exe') uf (Join-Path $build 'unsigned.apk') -C $build assets -C $build lib
 if ($LASTEXITCODE -ne 0) { throw 'asset packaging failed' }
-& (Join-Path $tools 'zipalign.exe') -f 4 (Join-Path $build 'unsigned.apk') (Join-Path $build 'aligned.apk')
+& (Join-Path $tools 'zipalign.exe') -f 4 '.build/unsigned.apk' '.build/aligned.apk'
 if ($LASTEXITCODE -ne 0) { throw 'zipalign failed' }
 
 $key = if ($SigningKey) { (Resolve-Path -LiteralPath $SigningKey).Path } else { Join-Path $build 'debug.keystore' }
@@ -107,3 +114,6 @@ if ($LASTEXITCODE -ne 0) { throw 'apk signing failed' }
 & (Join-Path $tools 'apksigner.bat') verify $apk
 if ($LASTEXITCODE -ne 0) { throw 'apk verification failed' }
 Write-Output $apk
+} finally {
+    Pop-Location
+}

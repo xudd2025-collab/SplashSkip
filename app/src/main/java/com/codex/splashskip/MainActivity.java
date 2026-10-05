@@ -1,6 +1,7 @@
 package com.codex.splashskip;
 
 import android.app.Activity;
+import android.accessibilityservice.AccessibilityServiceInfo;
 
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -21,6 +22,7 @@ import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
+import android.view.accessibility.AccessibilityManager;
 import android.view.WindowInsets;
 import android.widget.Button;
 import android.widget.EditText;
@@ -52,6 +54,9 @@ public final class MainActivity extends Activity {
     private TextView status, accessBadge, guardSummary, connectionBadge;
     private TextView connectionStatus, connectButton, autoWifiSummary, recentSummary, lastAction, lastVisual, lastTap;
     private TextView updateSummary, downloadSummary;
+    private final TextView[] versionChips = new TextView[3];
+    private final TextView[] updateBadges = new TextView[3];
+    private UpdateChecker.Result availableUpdate;
     private UpdateChecker updateChecker;
     private ApkUpdater apkUpdater;
     private AppDialog downloadDialog;
@@ -72,7 +77,7 @@ public final class MainActivity extends Activity {
     private boolean restoreAfterSettings, resumed;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable updateStatus = new Runnable() {
-        @Override public void run() { refresh(); handler.postDelayed(this, 1000); }
+        @Override public void run() { refresh(); presentPendingUpdate(); handler.postDelayed(this, 1000); }
     };
 
     @Override public void onCreate(Bundle saved) {
@@ -155,10 +160,18 @@ public final class MainActivity extends Activity {
         identity.addView(heading);
         TextView caption = text(subtitle, 12, MUTED); caption.setPadding(0, dp(3), 0, 0); identity.addView(caption);
         header.addView(identity, new LinearLayout.LayoutParams(0, -2, 1));
+        LinearLayout versionArea = column(); versionArea.setGravity(Gravity.END);
         TextView versionChip = chip("v" + version, ACCENT, SOFT);
         versionChip.setContentDescription("版本 " + version + "，点击查看关于");
-        versionChip.setOnClickListener(v -> about());
-        header.addView(versionChip, new LinearLayout.LayoutParams(-2, dp(40)));
+        versionChip.setOnClickListener(v -> openHeaderUpdate());
+        versionArea.addView(versionChip, new LinearLayout.LayoutParams(-2, dp(40)));
+        TextView updateBadge = chip("有更新", Color.WHITE, ACCENT);
+        updateBadge.setTextSize(10); updateBadge.setPadding(dp(8),0,dp(8),0);
+        updateBadge.setVisibility(View.GONE); updateBadge.setOnClickListener(v -> openHeaderUpdate());
+        LinearLayout.LayoutParams badgeParams = new LinearLayout.LayoutParams(-2,dp(22)); badgeParams.topMargin=dp(4);
+        versionArea.addView(updateBadge,badgeParams);
+        versionChips[index]=versionChip; updateBadges[index]=updateBadge;
+        header.addView(versionArea, new LinearLayout.LayoutParams(-2,-2));
         content.addView(header, new LinearLayout.LayoutParams(-1, -2));
         return content;
     }
@@ -171,7 +184,7 @@ public final class MainActivity extends Activity {
         access.setContentDescription("管理无障碍服务");
         access.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
         LinearLayout accessTitle = row();
-        accessTitle.addView(labelWithHelp("无障碍服务", () -> "开启后，助手才能读取跳过控件，并通过系统无障碍手势点击。\n\n此权限用于跳过开屏广告和处理你启用的应用规则。系统关闭服务时，请在设置中重新开启。"), new LinearLayout.LayoutParams(0, -2, 1));
+        accessTitle.addView(labelWithHelp("无障碍服务", () -> "开启后，助手才能读取跳过控件和父子关系，并通过系统无障碍执行点击。\n\n此权限用于跳过开屏广告和处理你启用的应用规则。系统关闭服务时，请在设置中重新开启。"), new LinearLayout.LayoutParams(0, -2, 1));
         accessBadge = chip("", GREEN, Color.rgb(234, 247, 241)); accessTitle.addView(accessBadge);
         TextView accessArrow=text("›",24,MUTED);accessArrow.setGravity(Gravity.CENTER);
         accessTitle.addView(accessArrow,new LinearLayout.LayoutParams(dp(20),dp(48)));
@@ -186,15 +199,15 @@ public final class MainActivity extends Activity {
                 prefs.getBoolean("enabled", true), value -> prefs.edit().putBoolean("enabled", value).apply(), true,true);
         feature(features, "严格识别", null, () -> "优先选择名称、计时和广告语境明确的跳过控件，减少误点。\n\n开启后，文字或控件信息不明确的广告可能会被放过。",
                 prefs.getBoolean("strict", true), value -> prefs.edit().putBoolean("strict", value).apply(), true,true);
-        feature(features, "AI 强化模式", "通用识别 · 应用规则 " + AppProfiles.all(this).size() + " 款", () -> "内置离线中文模型读取当前画面的“跳过／关闭／关闭广告”，结合广告线索确认。每帧重新定位，不依赖广告正文、应用品牌或历史点击位置。旧按钮和特殊页面规则保留为回退。\n\n高置信度的新鲜画面用一帧点击；普通控件优先直接点击，无法使用控件时模拟手势。普通推荐、静音叉号、无明确关闭目标的页面不点击。\n\n桌面、后台和锁屏暂停截图；进入应用后短扫描，结束后暂停通用截图，页面变化重新触发。被浮层挡住时等待，识别超时或手势取消时记录原因。实际点击效果和耗时可在“记录”页查看。\n\n通用文字模型在本机 CPU 运行，无需联网下载，也不上传画面或识别文字。旧按钮模型保留 NNAPI 回退；实际硬件由手机驱动决定。特殊规则与独立开关位于“应用规则”。近期特征只排序当前旧模型候选，不生成旧坐标点击，可在记录页清除。",
-                AppProfiles.enabled(this), value -> prefs.edit().putBoolean("ai_enhanced", value).apply(), true,true);
+        feature(features, "AI 强化模式", "父子控件 · 应用规则 " + AppProfiles.all(this).size() + " 款", this::recognitionHelp,
+                AppProfiles.enabled(this), value -> prefs.edit().putBoolean("ai_enhanced", value).apply(), true,true,this::adaptedApps);
         feature(features, "防摇一摇", null, () -> "每次进入普通第三方应用，包括从后台切回，临时暂停该应用的运动传感器。返回同一应用会重新开始 6 秒计时，到期自动恢复。\n\n需要在“连接”页完成本机连接，或使用已授权的 Shizuku。期间该应用的重力感应、指南针也会暂停。\n\n这个开关与自动跳过独立。\n\n当前状态：" + prefs.getString("sensor_status", "尚未连接"),
                 SensorGuardController.get(this).enabled(), value -> { SensorGuardController.get(this).setEnabled(value); refresh(); }, false,true);
         guardSummary = text("", 11, MUTED);guardSummary.setSingleLine(true);guardSummary.setEllipsize(TextUtils.TruncateAt.END);
         guardSummary.setPadding(dp(16), 0, dp(16), dp(12)); features.addView(guardSummary);
 
         LinearLayout appRules = card(content, false);
-        actionRow(appRules,"应用规则","查看适配应用与独立开关",() -> "完整适配名单统一放在这里，点击进入后选择应用。\n\n新增适配会自动加入列表。各应用规则的问号提供说明，已有独立开关可分别设置。",this::appRulesSettings,false);
+        actionRow(appRules,"应用规则","识别设置与独立开关",() -> "这里可设置“视觉补充识别”，默认关闭。关闭时只读取父子控件，不截图；开启后控件不足时补充视觉判断。\n\n应用规则与独立开关统一放在这里，功能名称后的问号提供说明。",this::appRulesSettings,false);
         LinearLayout footer=row();footer.setGravity(Gravity.CENTER);footer.setPadding(0,dp(4),0,0);
         footer.addView(text("本机处理 · 不上传屏幕",11,MUTED));
         TextView notice=text("使用须知",11,ACCENT);notice.setGravity(Gravity.CENTER);
@@ -209,7 +222,7 @@ public final class MainActivity extends Activity {
         LinearLayout title = row();
         title.addView(labelWithHelp("一键连接", () -> "首次使用先完成无线配对，以后可使用保存的授权恢复连接。\n\n启用 Wi-Fi 自动连接并完成一次授权后，一键恢复会在助手内开启无线调试并重连。首次配对码、新 Wi-Fi 的系统确认或撤销过授权时，仍需在系统页面确认。\n\n连接只在本机进行，无需保持 USB 连接。"), new LinearLayout.LayoutParams(0, -2, 1));
         connectionBadge = chip("", ACCENT, SOFT); title.addView(connectionBadge); connection.addView(title);
-        connectionStatus = text("", 13, MUTED); connectionStatus.setMaxLines(4); connectionStatus.setEllipsize(TextUtils.TruncateAt.END);
+        connectionStatus = text("", 13, MUTED); connectionStatus.setMaxLines(5); connectionStatus.setEllipsize(TextUtils.TruncateAt.END);
         connectionStatus.setLineSpacing(dp(2), 1); connectionStatus.setPadding(0, dp(2), 0, dp(18)); connection.addView(connectionStatus);
         connectButton = actionButton("连接 / 恢复", true, () -> {
             LocalAdbController local = LocalAdbController.get(this);
@@ -258,21 +271,24 @@ public final class MainActivity extends Activity {
         recentSummary=text("",13,INK);recentSummary.setLineSpacing(dp(3),1);latest.addView(recentSummary);
         lastAction = text("", 13, MUTED); lastAction.setLineSpacing(dp(3), 1); lastAction.setPadding(0, dp(4), 0, dp(12)); latest.addView(lastAction);
         divider(latest, 0);
-        latest.addView(labelWithHelp("视觉识别", () -> "这里保留模型或特征匹配结果，以及点击后原位置是否还存在跳过文字。\n\n只有符合识别条件的候选才会尝试点击。文字消失也不一定代表所有情况下都已关闭广告。"));
+        latest.addView(labelWithHelp("识别结果", () -> "显示当前识别模式和最近判断。控件模式直接读取父子关系；启用视觉补充后也会记录模型或特征匹配结果。\n\n只有符合识别条件的候选才会尝试点击。提交点击或按钮消失不能单独证明广告已关闭。"));
         lastVisual = text("", 13, MUTED); lastVisual.setLineSpacing(dp(4), 1); lastVisual.setPadding(0, dp(4), 0, dp(4)); latest.addView(lastVisual);
         section(content, "诊断工具");
+        LinearLayout bounds=card(content,false);
+        feature(bounds,"自动记录控件边框","打开其他应用时记录 · 保存在本机",() -> "打开其他应用时自动保存当前控件边框、父子关系、类名、资源 ID 和识别结果，回到助手后仍可查看。\n\n只记录控件图，不截图、不上传；不保存输入框内容或整页正文。最多 64 条、保留 7 天，总容量约 1.5 MB。复杂页面可能只记录部分控件，会明确标注。\n\n关闭自动跳过后仍可在应用启动时只读记录。历史边框仅供诊断，不用于点击。",prefs.getBoolean("native_bounds_auto",true),value -> prefs.edit().putBoolean("native_bounds_auto",value).apply(),true);
+        actionRow(bounds,"查看自动边框","点选边框 · 查看控件 · 导出记录",null,this::boundsSettings,false);
         LinearLayout tools = card(content, false);
         actionRow(tools, "复制日志", "保存在手机本地", () -> "复制本应用的诊断日志，包含扫描、识别、点击结果与连接状态，方便分析无法识别或无法点击的样式。\n\n复制到剪贴板，不会自动发送或上传。", () -> {
             ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
             clipboard.setPrimaryClip(ClipData.newPlainText("开屏助手诊断", Diagnostics.read(this)));
             Toast.makeText(this, "诊断日志已复制", Toast.LENGTH_SHORT).show();
         }, true);
-        actionRow(tools, "记录手动点击", "等待下一次点击 · 两分钟内有效", () -> "开启后，在目标应用中亲手点一次跳过按钮。暂缓自动点击，尝试将点击事件关联到刚刚观察到的父子控件与局部视觉特征。\n\n请在特征库里确认对应结果。没有控件事件、点击前特征或目标不明确时只记诊断，不拼造训练数据。两分钟后自动恢复，再次点击也可取消。", () -> {
+        actionRow(tools, "记录手动点击", "等待下一次点击 · 两分钟内有效", () -> "开启后，在目标应用中亲手点一次跳过按钮。暂缓自动点击，尝试关联刚刚观察到的父子控件；只有启用视觉补充时才记录按钮局部视觉特征。\n\n请在特征库里确认对应结果。没有控件事件、点击前特征或目标不明确时只记诊断。两分钟后自动恢复，再次点击也可取消。", () -> {
             boolean capturing = prefs.getBoolean("capture_click", false);
             prefs.edit().putBoolean("capture_click", !capturing).putLong("capture_until",System.currentTimeMillis()+120000).apply(); refresh();
             Toast.makeText(this, capturing ? "已取消记录" : "请在目标应用中手动点一次跳过", Toast.LENGTH_SHORT).show();
         }, false);
-        actionRow(tools,"控件与视觉特征库","父子结构 · 点击结果 · 训练记录",() -> "按当前控件树寻找候选，再用本机视觉核对按钮和广告线索。记录点击结果，供统一训练；不会按历史位置点击。可在这里纠正结果、导出或清除。",this::buttonMemorySettings,true);
+        actionRow(tools,"控件与视觉特征库","父子结构 · 点击结果 · 训练记录",() -> "按当前控件树寻找候选，记录父子关系和点击结果，供统一训练。开启视觉补充时也会记录按钮局部特征。\n\n不按历史位置点击。可在这里纠正结果、导出或清除。",this::buttonMemorySettings,true);
         LinearLayout taps = card(content);
         taps.addView(labelWithHelp("手动点击记录", () -> "显示等待状态或最近收到的控件事件。\n\n当前已适配：" + AppProfiles.labels(this) + "。事件内容仅在本机记录。"));
         lastTap = text("", 13, MUTED); lastTap.setLineSpacing(dp(3), 1); lastTap.setPadding(0, dp(3), 0, 0); taps.addView(lastTap);
@@ -291,19 +307,77 @@ public final class MainActivity extends Activity {
         actionRow(updateOptions, "查看源码", ProjectNotice.CAPTION, () -> ProjectNotice.SUMMARY, () -> openWeb(ProjectNotice.SOURCE_URL), true);
         feature(updateOptions, "更新加速", "内置下载线路 · 默认开启", () -> "用于本应用的版本检查和安装包下载。开启后优先使用两条公共下载线路，失败时回退到官方直连，无需另装加速器。\n\n公共线路提供者会收到连接的 IP 地址和公开版本请求；不发送屏幕、诊断日志或配对密钥。关闭后仅使用官方直连。\n\n公共线路可能限速或暂时失效，下载速度取决于当前网络。",
                 prefs.getBoolean("update_acceleration", true), value -> prefs.edit().putBoolean("update_acceleration", value).apply(), true);
-        feature(updateOptions, "启动检查更新", "每天最多一次，可随时手动检查", () -> "开启后，在应用启动或回到前台时从官方 GitHub 仓库检查更新，每天最多一次。\n\n关闭后仍可点击“检查更新”。", prefs.getBoolean("update_on_start", true),
+        feature(updateOptions, "前台检查更新", "打开或返回助手时检查", () -> "开启后，在应用启动或回到前台时从官方 GitHub 仓库检查更新。30 秒内重复返回时不重复请求；检查失败后，下次返回前台可重试。\n\n发现新版本后，右上角会显示“有更新”。关闭自动检查后仍可手动检查。", prefs.getBoolean("update_on_start", true),
                 value -> prefs.edit().putBoolean("update_on_start", value).apply(), true);
-        updateReminderSwitch=feature(updateOptions,"新版本弹窗提醒","发现更新自动提示，可随时关闭",() -> "开启后，助手在前台发现新版本时会弹出更新提示；每天自动检查最多一次，已缓存的新版本也会在打开助手时提醒。\n\n弹窗中的“再也不提示”会关闭所有后续自动更新弹窗，覆盖更新后也保留。这里可重新开启；关闭提醒后仍能手动检查、下载和安装更新。",
+        updateReminderSwitch=feature(updateOptions,"新版本弹窗提醒","发现更新自动提示，可随时关闭",() -> "开启后，助手在前台发现新版本时会弹出更新提示，已缓存的新版本也会在打开助手时提醒。\n\n弹窗中的“再也不提示”会关闭后续自动更新弹窗，覆盖更新后也保留。这里可重新开启；关闭提醒后右上角仍会显示“有更新”，可手动查看、下载和安装。",
                 prefs.getBoolean("update_prompt",true),value -> prefs.edit().putBoolean("update_prompt",value).apply(),false);
+    }
+
+    private void boundsSettings() {
+        LinearLayout options=column();
+        actionRow(options,"最近的控件边框","按时间查看其他应用的记录",null,this::reviewBounds,true);
+        actionRow(options,"导出边框记录","保存 JSON，便于分析漏识别原因",null,() -> {
+            Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("application/json")
+                    .addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_TITLE,"SplashSkip-bounds.json");
+            try{startActivityForResult(intent,624);}catch(Exception error){Toast.makeText(this,"未找到文件保存入口",Toast.LENGTH_SHORT).show();}
+        },true);
+        actionRow(options,"清除边框记录","删除手机上保存的控件图",null,() ->
+            new AppDialog.Builder(this).setTitle("清除自动边框").setMessage("删除手机上保存的全部控件边框记录？")
+                .setNegativeButton("取消",null).setPositiveButton("清除",(d,w) -> new Thread(() -> {
+                    String message;
+                    try{NativeBoundsArchive.get(this).clear();message="边框记录已清除";}catch(RuntimeException error){message="清除失败，请稍后重试";}
+                    final String status=message;runOnUiThread(() -> {if(!isFinishing()&&!isDestroyed())Toast.makeText(this,status,Toast.LENGTH_SHORT).show();});
+                },"bounds-clear").start()).show(),false);
+        new AppDialog.Builder(this).setTitle("自动控件边框").setView(options).setPositiveButton("完成",null).show();
+    }
+    private void reviewBounds() {
+        new Thread(() -> {
+            try {
+                java.util.List<org.json.JSONObject> records=NativeBoundsArchive.get(this).recent();
+                runOnUiThread(() -> {
+                    if(isFinishing()||isDestroyed())return;
+                    if(records.isEmpty()){showHelp("自动控件边框","还没有记录。保持无障碍开启，打开其他应用后再回到这里查看。");return;}
+                    LinearLayout rows=column();
+                    TextView hint=text("点记录查看边框与点击关系。绿色可点击，紫色关闭/跳过；支持放大、筛选和父子节点查看。",12,MUTED);
+                    hint.setPadding(dp(12),dp(6),dp(12),dp(10));rows.addView(hint);
+                    for(org.json.JSONObject record:records) {
+                        String time=new java.text.SimpleDateFormat("MM-dd HH:mm:ss",java.util.Locale.getDefault()).format(new java.util.Date(record.optLong("captured_wall_time")));
+                        String title=time+" · "+boundsAppName(record.optString("package"));
+                        String detail=record.optInt("width")+"×"+record.optInt("height")+" · "+record.optInt("node_count")+" 个控件 · "+boundsCompleteness(record);
+                        actionRow(rows,title,detail,null,() -> showBounds(record.optString("id")),true);
+                    }
+                    new AppDialog.Builder(this).setTitle("最近 "+records.size()+" 条边框").setView(rows).setPositiveButton("返回",null).show();
+                });
+            }catch(RuntimeException error){runOnUiThread(() -> {if(!isFinishing()&&!isDestroyed())showHelp("读取失败","暂时无法读取边框记录，请稍后重试。");});}
+        },"bounds-list").start();
+    }
+    private String boundsAppName(String pkg) {
+        try{return getPackageManager().getApplicationLabel(getPackageManager().getApplicationInfo(pkg,0)).toString();}
+        catch(Exception ignored){return pkg;}
+    }
+    private String boundsCompleteness(org.json.JSONObject frame) {
+        return frame.optBoolean("scope_only")?"仅广告区域 · "+(frame.optBoolean("scope_complete")?"完整":"部分"):frame.optBoolean("tree_complete")?"全页完整":"部分控件";
+    }
+    private void showBounds(String id) {
+        new Thread(() -> {
+            try {
+                org.json.JSONObject frame=NativeBoundsArchive.get(this).frame(id);
+                runOnUiThread(() -> {
+                    if(isFinishing()||isDestroyed())return;
+                    if(frame==null){showHelp("记录已过期","这条记录已被清除或轮换，请查看其他记录。");return;}
+                    new NativeBoundsReview(this,frame,boundsAppName(frame.optString("package"))).show();
+                });
+            }catch(RuntimeException error){runOnUiThread(() -> {if(!isFinishing()&&!isDestroyed())showHelp("读取失败","暂时无法读取这条记录，请稍后重试。");});}
+        },"bounds-preview").start();
     }
 
     private void buttonMemorySettings() {
         JointLearningStore store=JointLearningStore.get(this);
         LinearLayout options=column();
         TextView summary=text(store.summary(),13,INK);summary.setPadding(dp(16),dp(8),dp(16),dp(12));options.addView(summary);
-        feature(options,"记录联合特征","父子控件关系 + 按钮局部视觉",() -> "记录当前按钮的父子层级、可点击关系、控件标识摘要与 8×8 灰度特征。只保存在手机本地，最多 256 条、保留 30 天。最近 16 条候选另附控件框与语义角色，用于诊断；旧坐标不会用于后续点击。不会保存整页文本或完整广告截图。\n\n只有完成点击且两张清晰新帧确认原按钮消失才自动标为成功；这仍是观察结果，可以手动纠正。结果未知不进入训练。关闭后停止新增样本。",prefs.getBoolean("joint_learning",true),value -> prefs.edit().putBoolean("joint_learning",value).apply(),true);
+        feature(options,"记录联合特征","父子控件 · 点击结果",() -> "记录当前按钮的父子层级、可点击关系与控件标识摘要。只有开启视觉补充时才添加按钮局部灰度特征。记录只保存在手机本地，最多 256 条、保留 30 天；旧坐标不会用于后续点击。\n\n提交点击只代表尝试，请根据实际结果纠正记录。结果未知不进入训练。关闭后停止新增样本。",prefs.getBoolean("joint_learning",true),value -> prefs.edit().putBoolean("joint_learning",value).apply(),true);
         actionRow(options,"查看与纠正结果","成功 / 无效 / 误触 / 待确认",() -> "按时间、应用和动作找到对应记录，纠正自动判断。不要把没有看到结果的记录标为成功。",this::reviewJointRecords,true);
-        actionRow(options,"导出训练记录","保存到你选择的本地文件",() -> "导出 JSON，供电脑统一训练候选排序模型。文件包含应用包名、时间和控件摘要；不会自动发送。当前视觉核对和防误触条件始终保留。",() -> {
+        actionRow(options,"导出训练记录","保存到你选择的本地文件",() -> "导出 JSON，供电脑统一训练候选排序模型。文件包含应用包名、时间和控件摘要；不会自动发送。防误触判断仍按当前页面重新进行。",() -> {
             Intent save=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/json").putExtra(Intent.EXTRA_TITLE,"SplashSkip-controls.json");
             try{startActivityForResult(save,623);}catch(Exception error){Toast.makeText(this,"未找到文件保存入口",Toast.LENGTH_SHORT).show();}
         },true);
@@ -340,19 +414,31 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onActivityResult(int request,int result,Intent data) {
         super.onActivityResult(request,result,data);
-        if(request!=623 || result!=RESULT_OK || data==null || data.getData()==null)return;
+        if((request!=623 && request!=624) || result!=RESULT_OK || data==null || data.getData()==null)return;
         Uri destination=data.getData();
         new Thread(()->{
             String message;
             try(java.io.OutputStream out=getContentResolver().openOutputStream(destination,"wt")) {
-                if(out==null)throw new java.io.IOException("No output");out.write(JointLearningStore.get(this).exportBytes());message="训练记录已保存";
+                if(out==null)throw new java.io.IOException("No output");
+                out.write(request==624?NativeBoundsArchive.get(this).exportBytes():JointLearningStore.get(this).exportBytes());
+                message=request==624?"边框记录已保存":"训练记录已保存";
             }catch(Exception error){message="导出失败，请重新选择保存位置";}
-            final String status=message;runOnUiThread(()->Toast.makeText(this,status,Toast.LENGTH_LONG).show());
+            final String status=message;runOnUiThread(()->{if(!isFinishing()&&!isDestroyed())Toast.makeText(this,status,Toast.LENGTH_LONG).show();});
         },"joint-export").start();
     }
     private void appRulesSettings() {
         LinearLayout options=column();
-        feature(options,"通用页面广告关闭","跨应用识别明确的关闭广告按钮",() -> "识别当前“关闭广告”字形、控件边界和本地训练模型，支持更长关闭按钮的前缀。无需按应用逐个添加，也不匹配宣传图片或固定位置。\n\n前台点击、页面变化后短时加快扫描；其余时间每 1.5 秒检查明确关闭控件。持续动画不续高频扫描，桌面、后台和锁屏停止截图。\n\n普通推荐叉号、静音图标和没有关闭按钮的广告不属于该规则。缺少文字或足够线索的样式仍可能漏识别。",prefs.getBoolean("generic_ad_close",true),value -> prefs.edit().putBoolean("generic_ad_close",value).apply(),true);
+        feature(options,"视觉补充识别","控件不足时补充 · 默认关闭",() -> "关闭时，只读取当前界面的父子控件并点击，不截图，也不启动视觉模型。\n\n开启时仍优先直接读取控件，控件不足时才截图，在本机识别“跳过／关闭”文字和按钮线索。自绘按钮或没有文本的“×”可能需要视觉补充；目标被遮挡或无法确认时会放过。\n\n不依赖广告宣传图片或历史坐标，画面不上传。",RecognitionMode.visuals(this),value -> {RecognitionMode.setVisuals(this,value);refresh();},true);
+        feature(options,"通用页面广告关闭","跨应用识别明确的关闭广告按钮",() -> "从当前控件文本、父子关系和广告语境中寻找“关闭广告”按钮，不匹配宣传图片或固定位置。\n\n普通推荐叉号、静音图标和没有明确关闭目标的页面不点击。"+recognitionRuleNote(),prefs.getBoolean("generic_ad_close",true),value -> prefs.edit().putBoolean("generic_ad_close",value).apply(),true);
+        addProfileRows(options);
+        new AppDialog.Builder(this).setTitle("应用规则").setView(options).setPositiveButton("完成",null).show();
+    }
+    private void adaptedApps() {
+        LinearLayout options=column();
+        addProfileRows(options);
+        new AppDialog.Builder(this).setTitle("适配应用").setView(options).setPositiveButton("完成",null).show();
+    }
+    private void addProfileRows(LinearLayout options) {
         int count=AppProfiles.all(this).size(),index=0;
         TextView summary=text("已适配 "+count+" 款应用",12,MUTED);summary.setPadding(dp(16),0,dp(16),dp(8));options.addView(summary);
         for(AppProfiles.Profile profile:AppProfiles.all(this).values()) {
@@ -366,15 +452,29 @@ public final class MainActivity extends Activity {
             TextView empty=text("适配库暂为空，普通应用仍可使用控件识别。",13,MUTED);
             empty.setPadding(dp(16),dp(8),dp(16),dp(8));options.addView(empty);
         }
-        new AppDialog.Builder(this).setTitle("应用规则").setView(options).setPositiveButton("完成",null).show();
     }
     private String ruleDescription(AppProfiles.Profile profile) {
-        if("bilibili".equals(profile.inAppRules))return "广告卡片关闭受自动跳过和 AI 强化模式控制。取消自动进入直播间有独立开关，默认关闭，正常观看直播不受影响。\n\n仅处理已适配样式。";
-        if("netdisk".equals(profile.inAppRules))return "分别控制优惠券弹窗和截图后出现的客服卡片。在前台持续检测已适配场景。\n\n需要自动跳过和 AI 强化模式。";
-        if("huya".equals(profile.inAppRules))return "开屏通过通用模型确认“跳过”和广告线索。横竖屏推广卡片按当前白色面板、下载或开玩按钮和真实叉号定位，不保存点击位置。主播优选、虎粮及鱼种浮层分别核验自己的标题与控件。\n\n完整场景置信度足够高时快速点击，其余需连续两帧确认。两个开关独立设置，按钮消失后停止点击。需要自动跳过和 AI 强化模式。";
-        if("tencent".equals(profile.inAppRules))return "开屏按当前跳过字形、模型和广告线索定位；启动窗口可用完整互动提示辅助。预约推广与页内视频分别确认对应控件。信息流仅处理同时有下载入口、广告标记和本卡片叉号的广告；出现关闭原因弹窗时点“直接关闭”，不选择反馈原因。\n\n四个开关独立设置。电视剧推荐、追剧卡片及没有关闭按钮的广告不点击。各线索的位置可搜索，不按历史坐标点击。需要自动跳过和 AI 强化模式。";
-        if("mobile".equals(profile.inAppRules))return "确认当前推广弹窗、圆圈中实际叉号及上一条/下一条导航文字后，按实际位置关闭。不同分辨率按控件尺寸缩放，不匹配广告正文。\n\n仅处理已确认的轮播推广结构。需要自动跳过和 AI 强化模式。";
-        return "强化识别已适配的跳过按钮"+(profile.popup!=null?"和活动弹窗":"")+"。\n\n随首页的自动跳过和 AI 强化模式开关启用。未知样式需要补充适配，画面在手机本地处理。";
+        String rules;
+        if("bilibili".equals(profile.inAppRules))rules="广告卡片关闭受自动跳过和 AI 强化模式控制。取消自动进入直播间有独立开关，默认关闭，正常观看直播不受影响。";
+        else if("netdisk".equals(profile.inAppRules))rules="分别控制优惠券弹窗和截图后出现的客服卡片。需要自动跳过和 AI 强化模式。";
+        else if("huya".equals(profile.inAppRules))rules="处理开屏跳过、推广卡片与已确认的浮层关闭。按当前控件和页面线索重新定位，两个开关独立设置。需要自动跳过和 AI 强化模式。";
+        else if("tencent".equals(profile.inAppRules))rules="分别设置开屏跳过、预约推广、页内视频与信息流广告。电视剧推荐、追剧卡片及没有明确关闭按钮的广告不点击。需要自动跳过和 AI 强化模式。";
+        else if("mobile".equals(profile.inAppRules))rules="处理已确认的轮播推广弹窗，重新寻找当前关闭目标，不匹配广告正文或固定位置。需要自动跳过和 AI 强化模式。";
+        else rules="强化识别跳过按钮"+(profile.popup!=null?"和已确认的活动弹窗":"")+"，随首页的自动跳过和 AI 强化模式开关启用。";
+        return rules+recognitionRuleNote();
+    }
+
+    private String recognitionHelp() {
+        String mode=RecognitionMode.visuals(this)?
+                "当前已开启视觉补充：优先读取父子控件，控件不足时才截图，在本机识别“跳过／关闭”文字和按钮线索。":
+                "当前只读取父子控件，不截图。结合按钮文字、可点击父节点和同组广告线索，直接点击当前控件；无需等待视觉模型。";
+        return mode+"\n\n不按广告宣传图片、历史位置或节点编号点击。普通推荐、静音叉号、被遮挡或无法确认的目标会放过。\n\n自绘按钮、没有文本的“×”可能未暴露控件，可在“应用规则”开启视觉补充。特殊规则与独立开关也放在那里。";
+    }
+
+    private String recognitionRuleNote() {
+        return RecognitionMode.visuals(this)?
+                "\n\n优先读取父子控件，控件不足时才使用本机视觉补充；每次重新定位，无法确认时放过。":
+                "\n\n当前仅使用父子控件，不截图。应用未暴露关闭控件时会放过；自绘按钮或没有文本的“×”可能需要开启视觉补充。";
     }
     private void profileSettings(AppProfiles.Profile profile) {
         if("bilibili".equals(profile.inAppRules))bilibiliSettings();
@@ -386,9 +486,9 @@ public final class MainActivity extends Activity {
     }
     private void bilibiliSettings() {
         LinearLayout options = column(); options.setPadding(dp(8), 0, dp(8), dp(12));
-        feature(options, "关闭广告卡片", "处理视频下方弹出的推广卡片", () -> "同时确认右侧关闭圆圈、相邻菜单、卡片拖动条与广告标记后，点击“×”。\n\n优先使用可访问的关闭控件，缺少控件时在本机匹配截图特征。\n\n需要开启“自动跳过”和“AI 强化模式”。", prefs.getBoolean("bili_close_ads", true),
+        feature(options, "关闭广告卡片", "处理视频下方弹出的推广卡片", () -> "确认当前推广卡片和真实关闭目标，优先直接点击应用暴露的关闭控件。\n\n需要开启“自动跳过”和“AI 强化模式”。"+recognitionRuleNote(), prefs.getBoolean("bili_close_ads", true),
                 value -> { prefs.edit().putBoolean("bili_close_ads", value).apply(); refresh(); }, true);
-        feature(options, "取消自动进直播", "独立开关，默认关闭", () -> "同时识别“自动进入直播间”和下方“取消”时，点击取消。\n\n此开关独立于“自动跳过”和“AI 强化模式”。手动进入的正常直播间不会因为这个开关被退出。\n\n当前适配你提供的直播预览样式。", prefs.getBoolean("bili_cancel_live", false),
+        feature(options, "取消自动进直播", "独立开关，默认关闭", () -> "同时识别“自动进入直播间”和“取消”目标时，点击取消。\n\n此开关独立于“自动跳过”和“AI 强化模式”。手动进入的正常直播间不会因为这个开关被退出。"+recognitionRuleNote(), prefs.getBoolean("bili_cancel_live", false),
                 value -> { prefs.edit().putBoolean("bili_cancel_live", value).apply(); refresh(); }, false);
         new AppDialog.Builder(this).setTitle("哔哩哔哩规则").setView(options).setPositiveButton("完成", null).show();
     }
@@ -399,7 +499,7 @@ public final class MainActivity extends Activity {
         LinearLayout options=column();
         for(int i=0;i<labels.length;i++) {
             final String key=keys[i];
-            feature(options,labels[i],null,() -> "只关闭对应应用中已确认的场景。高置信度开屏跳过可直接点击，其他目标按场景规则确认。点击后再次检查，同一目标最多尝试两次。需要自动跳过和 AI 强化模式。",
+            feature(options,labels[i],null,() -> "只关闭对应应用中已确认的场景。优先直接点击当前可访问的控件，提交点击只代表尝试。需要自动跳过和 AI 强化模式。"+recognitionRuleNote(),
                     prefs.getBoolean(key,true),value -> prefs.edit().putBoolean(key,value).apply(),i<labels.length-1);
         }
         new AppDialog.Builder(this).setTitle(title+"规则").setView(options).setPositiveButton("完成",null).show();
@@ -407,7 +507,6 @@ public final class MainActivity extends Activity {
 
     private void checkUpdates(boolean manual) {
         if (updateChecker.busy()) { if (manual) Toast.makeText(this, "正在检查更新", Toast.LENGTH_SHORT).show(); return; }
-        if (!manual) prefs.edit().putLong("update_checked_at", System.currentTimeMillis()).apply();
         updateChecker.check(version, result -> {
             if (isFinishing() || isDestroyed()) return;
             refresh();
@@ -415,6 +514,23 @@ public final class MainActivity extends Activity {
             presentUpdate(result,manual);
         });
         refresh();
+    }
+    private void openHeaderUpdate() {
+        UpdateChecker.Result update=updateChecker.cached(version);
+        if(update!=null && update.newer) {
+            if(apkUpdater.busy() || apkUpdater.ready())showDownloadDialog();
+            else presentUpdate(update,true);
+        } else about();
+    }
+    private void refreshUpdateBadges() {
+        availableUpdate=updateChecker.cached(version);
+        boolean newer=availableUpdate!=null && availableUpdate.newer;
+        for(int i=0;i<updateBadges.length;i++) {
+            if(updateBadges[i]==null || versionChips[i]==null)continue;
+            updateBadges[i].setVisibility(newer?View.VISIBLE:View.GONE);
+            updateBadges[i].setContentDescription(newer?"有更新，最新版本 "+availableUpdate.version+"，点击查看更新":"");
+            versionChips[i].setContentDescription("版本 "+version+(newer?"，有更新，点击查看更新":"，点击查看关于"));
+        }
     }
     private void disableUpdatePrompts() {
         prefs.edit().putBoolean("update_prompt",false).apply();
@@ -424,7 +540,10 @@ public final class MainActivity extends Activity {
     private void presentUpdate(UpdateChecker.Result result,boolean manual) {
             if(isFinishing() || isDestroyed() || !resumed)return;
             if (!manual && (!result.newer || !prefs.getBoolean("update_prompt",true) || result.version.equals(promptedUpdateVersion))) return;
-            if(updateDialog!=null && updateDialog.isShowing())return;
+            if((updateDialog!=null && updateDialog.isShowing()) || (!manual && (apkUpdater.busy() ||
+                    downloadDialog!=null && downloadDialog.isShowing() || usageDialog!=null && usageDialog.isShowing() || installAfterSettings))) {
+                pendingUpdate=result;pendingUpdateManual=manual;return;
+            }
             if (result.version.isEmpty()) { showHelp("应用内更新", result.message); return; }
             if (!result.newer) {
                 showHelp("应用内更新", result.message + "\n\n发现新版本后，会在本应用中下载并打开系统安装确认。");
@@ -446,6 +565,15 @@ public final class MainActivity extends Activity {
                 downloadCompletionPresented=false;apkUpdater.start(result);showDownloadDialog();
             });
             promptedUpdateVersion=result.version;updateDialog=dialog.create();updateDialog.show();
+    }
+    private void presentPendingUpdate() {
+        if(pendingUpdate==null || !resumed || apkUpdater.busy() || installAfterSettings ||
+                downloadDialog!=null && downloadDialog.isShowing() || updateDialog!=null && updateDialog.isShowing() ||
+                usageDialog!=null && usageDialog.isShowing())return;
+        boolean manual=pendingUpdateManual;
+        UpdateChecker.Result waiting=manual?pendingUpdate:updateChecker.cached(version);
+        pendingUpdate=null;
+        if(waiting!=null)presentUpdate(waiting,manual);
     }
 
     private void showDownloadDialog() {
@@ -543,7 +671,7 @@ public final class MainActivity extends Activity {
         if(downloadShown || apkUpdater.busy() || (apkUpdater.ready() && !downloadCompletionPresented))showDownloadDialog();
         if(installAfterSettings) {
             installAfterSettings=false;
-            if(getPackageManager().canRequestPackageInstalls())installUpdate();
+            if(getPackageManager().canRequestPackageInstalls()){installUpdate();return;}
             else showHelp("安装更新","尚未允许安装应用。下载的 APK 已保留，允许后可再点立即安装。");
         }
         if (!restoreAfterSettings) LocalAdbController.get(this).reconnect(false);
@@ -553,18 +681,18 @@ public final class MainActivity extends Activity {
         } else if(prefs.getBoolean("update_on_start",true)) {
             UpdateChecker.Result cached=updateChecker.cached(version);if(cached!=null)presentUpdate(cached,false);
         }
-        if (prefs.getBoolean("update_on_start", true) && System.currentTimeMillis() - prefs.getLong("update_checked_at", 0) > 86_400_000L) checkUpdates(false);
+        if (UpdatePolicy.checkOnForeground(prefs.getBoolean("update_on_start",true),updateChecker.busy(),
+                System.currentTimeMillis(),prefs.getLong("update_attempted_at",0)))checkUpdates(false);
     }
     @Override protected void onPause() { resumed = false; apkUpdater.listen(null); handler.removeCallbacks(updateStatus); super.onPause(); }
     @Override protected void onDestroy() { handler.removeCallbacks(updateStatus); if(downloadDialog!=null)downloadDialog.dismiss(); if(usageDialog!=null)usageDialog.dismiss(); if(updateDialog!=null)updateDialog.dismiss(); if (updateChecker != null) updateChecker.close(); super.onDestroy(); }
 
     private void refresh() {
         if (status == null || connectionStatus == null || lastTap == null) return;
-        String services = Settings.Secure.getString(getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
-        boolean accessibility = services != null && services.contains(new ComponentName(this, SkipService.class).flattenToString());
-        boolean serviceRunning=accessibility && SkipService.running();
-        status.setText(serviceRunning?(AppProfiles.enabled(this)?SkipService.ocrReady()?"服务运行中 · 通用文字识别已就绪":"服务运行中 · 文字模型准备中":"服务运行中 · AI 强化已关闭"):accessibility?"权限已开，但服务未运行；请关闭再开启无障碍":"开启后，助手才能自动点击跳过");
-        accessBadge.setText(serviceRunning ? "运行中" : accessibility?"未运行":"未开启");
+        boolean serviceRunning=SkipService.running();
+        boolean accessibility=serviceRunning || accessibilityConfigured();
+        status.setText(serviceRunning?(!AppProfiles.enabled(this)?"服务运行中 · AI 强化已关闭":!RecognitionMode.visuals(this)?"服务运行中 · 父子控件识别":SkipService.ocrReady()?"服务运行中 · 控件 + 视觉补充":"服务运行中 · 控件就绪，视觉准备中"):accessibility?"无障碍已开启，等待服务连接":"开启后，助手才能自动点击跳过");
+        accessBadge.setText(serviceRunning ? "运行中" : accessibility?"已开启":"未开启");
         tintChip(accessBadge, serviceRunning ? GREEN : AMBER, serviceRunning ? Color.rgb(234,247,241) : Color.rgb(255,246,231));
         LocalAdbController local = LocalAdbController.get(this);
         // Wait for any in-flight health check, then restore immediately after returning from Settings.
@@ -574,7 +702,7 @@ public final class MainActivity extends Activity {
         }
         connectionBadge.setText(local.ready() ? "已连接" : local.busy() ? "连接中" : local.paired() ? "待恢复" : "待配对");
         tintChip(connectionBadge, local.ready() ? GREEN : ACCENT, local.ready() ? Color.rgb(234,247,241) : SOFT);
-        connectionStatus.setText(prefs.getString("local_adb_status", "首次使用请完成本机配对"));
+        connectionStatus.setText((Build.VERSION.SDK_INT>=30?local.wirelessSummary()+"\n":"")+prefs.getString("local_adb_status", "首次使用请完成本机配对"));
         if(autoWifiSummary!=null)autoWifiSummary.setText(Build.VERSION.SDK_INT<30?"自动无线调试需要 Android 11 或更新版本":
                 !local.automaticWifi()?"已关闭 · 可随时启用":
                 !local.paired()?"先完成首次配对，之后自动连接":
@@ -598,15 +726,36 @@ public final class MainActivity extends Activity {
         }
         recentSummary.setText(recent);
         lastAction.setText(action.equals("暂无") ? "暂无跳过尝试" : action);
-        lastVisual.setText("最近画面判断\n" + prefs.getString("last_visual", "暂无") + "\n\n点击后检查\n" + prefs.getString("last_result", "暂无"));
+        lastVisual.setText(RecognitionMode.visuals(this)?"最近画面判断\n"+prefs.getString("last_visual","暂无")+"\n\n点击后检查\n"+prefs.getString("last_result","暂无"):
+                "当前仅使用控件 · 不截图\n"+prefs.getString("last_control","等待下一次控件识别")+"\n\n点击后检查\n"+prefs.getString("last_result","暂无"));
         lastTap.setText(prefs.getBoolean("capture_click", false) ? "等待强化应用中的一次手动点击…" : prefs.getString("last_tap", "暂无手动点击记录"));
         if (updateSummary != null) updateSummary.setText(updateChecker.busy() ? "正在读取官方 GitHub Releases…" :
                 prefs.getString("update_status", "点击检查最新版本") + "\n" + updateChecker.repository());
+        refreshUpdateBadges();
         if(downloadSummary!=null)downloadSummary.setText(apkUpdater.message().isEmpty()?"暂无下载任务":apkUpdater.message());
+    }
+    private boolean accessibilityConfigured() {
+        ComponentName expected=new ComponentName(this,SkipService.class);
+        try {
+            String services=Settings.Secure.getString(getContentResolver(),Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+            if(services!=null)for(String service:services.split(":")) {
+                if(expected.equals(ComponentName.unflattenFromString(service.trim())))return true;
+            }
+        } catch(SecurityException ignored) { }
+        AccessibilityManager manager=(AccessibilityManager)getSystemService(ACCESSIBILITY_SERVICE);
+        if(manager!=null)try {
+            for(AccessibilityServiceInfo enabled:manager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)) {
+                android.content.pm.ResolveInfo resolve=enabled.getResolveInfo();
+                if(resolve!=null && resolve.serviceInfo!=null && expected.equals(new ComponentName(
+                        resolve.serviceInfo.packageName,resolve.serviceInfo.name)))return true;
+            }
+        } catch(SecurityException ignored) { }
+        return false;
     }
 
     private void about() {
-        new AppDialog.Builder(this).setTitle("开屏助手 · v" + version).setMessage("让开屏，更轻快。\n\n画面识别在本机进行，不上传屏幕内容。网络用于本机无线调试，以及启用的 GitHub 更新检查。\n\n强化适配库：" + AppProfiles.labels(this) + "。\n\n通用中文模型在本机 CPU 识别；旧按钮模型可尝试 NNAPI，可用加速设备由手机驱动决定。")
+        String mode=RecognitionMode.visuals(this)?"当前：控件优先，视觉补充已开启。控件不足时才截图，本机模型读取按钮文字和线索，画面不上传。":"当前：仅父子控件识别，不截图。自绘广告可能无法取得按钮，可在“应用规则”开启视觉补充。";
+        new AppDialog.Builder(this).setTitle("开屏助手 · v" + version).setMessage("让开屏，更轻快。\n\n"+mode+"\n\n网络用于本机无线调试，以及启用的 GitHub 更新检查。")
                 .setNegativeButton("源码与许可", (dialog, which) -> showProjectLicense())
                 .setPositiveButton("知道了", null).setNeutralButton("检查更新", (dialog, which) -> checkUpdates(true)).show();
     }
@@ -665,10 +814,26 @@ public final class MainActivity extends Activity {
     }
     private Switch feature(LinearLayout parent, String title, String caption, Supplier<String> help,
                          boolean initial, Consumer<Boolean> listener, boolean separator,boolean compact) {
+        return feature(parent,title,caption,help,initial,listener,separator,compact,null);
+    }
+    private Switch feature(LinearLayout parent, String title, String caption, Supplier<String> help,
+                         boolean initial, Consumer<Boolean> listener, boolean separator,boolean compact,Runnable captionAction) {
         LinearLayout feature = row(); feature.setPadding(dp(16), dp(2), dp(16), dp(2)); feature.setMinimumHeight(dp(caption == null ? (compact?52:60) : (compact?70:76)));
         LinearLayout description = column(); description.addView(labelWithHelp(title, help));
         if (caption != null) {
             TextView sub = text(caption, 11, MUTED); sub.setPadding(0, 0, 0, dp(compact?4:8));
+            if(captionAction!=null) {
+                android.text.SpannableString link=new android.text.SpannableString(caption);
+                int start=caption.indexOf("应用规则");
+                if(start>=0) {
+                    link.setSpan(new android.text.style.ForegroundColorSpan(ACCENT),start,caption.length(),android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    link.setSpan(new android.text.style.UnderlineSpan(),start,caption.length(),android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                }
+                sub.setText(link);sub.setMinHeight(dp(32));sub.setGravity(Gravity.CENTER_VERTICAL);
+                sub.setFocusable(true);sub.setContentDescription("查看适配应用");
+                sub.setOnClickListener(v -> captionAction.run());
+                sub.setBackground(ripple(Color.TRANSPARENT,8,0));
+            }
             if(compact){sub.setSingleLine(true);sub.setEllipsize(TextUtils.TruncateAt.END);}description.addView(sub);
         }
         feature.addView(description, new LinearLayout.LayoutParams(0, -2, 1));
@@ -744,8 +909,10 @@ public final class MainActivity extends Activity {
 
     private boolean openWirelessSettings(boolean pairing) {
         try {
+            boolean developerPage=false;
             try { startActivity(new Intent("android.settings.WIRELESS_DEBUGGING_SETTINGS")); }
             catch (android.content.ActivityNotFoundException | SecurityException directUnavailable) {
+                developerPage=true;
                 Intent developer = new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS);
                 developer.putExtra(":settings:fragment_args_key", "toggle_adb_wireless");
                 Bundle arguments = new Bundle();
@@ -753,8 +920,7 @@ public final class MainActivity extends Activity {
                 developer.putExtra(":settings:show_fragment_args", arguments);
                 startActivity(developer);
             }
-            Toast.makeText(this, pairing ? "开启无线调试，打开“使用配对码配对设备”" :
-                    "开启无线调试后返回助手，即可用保存的授权恢复；授权已撤销时请重新配对", Toast.LENGTH_LONG).show();
+            Toast.makeText(this,LocalAdbController.get(this).wirelessSettingsHint(pairing,developerPage),Toast.LENGTH_LONG).show();
             return true;
         } catch (android.content.ActivityNotFoundException | SecurityException unavailable) {
             showHelp("无线调试", "系统没有开放此页面入口。请手动进入开发者选项 → 无线调试，开启后返回助手。搜索不到时可使用手填端口。");

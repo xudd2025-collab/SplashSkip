@@ -19,3 +19,5 @@ private/
 *.pyc
 __pycache__/
 SHA256SUMS.txt
+work/
+outputs/

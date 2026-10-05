@@ -35,13 +35,28 @@ final class BilibiliRules {
         final AccessibilityNodeInfo node;
         final String rule;
         final Rect bounds;
-        NodeHit(AccessibilityNodeInfo node, String rule, Rect bounds) { this.node = node; this.rule = rule; this.bounds = bounds; }
+        final BilibiliNativePolicy.Candidate pause;
+        NodeHit(AccessibilityNodeInfo node, String rule, Rect bounds) { this(node,rule,bounds,null); }
+        NodeHit(AccessibilityNodeInfo node, String rule, Rect bounds,BilibiliNativePolicy.Candidate pause) {
+            this.node=node;this.rule=rule;this.bounds=bounds;this.pause=pause;
+        }
     }
-    NodeHit node(AccessibilityNodeInfo root, int width, int height, boolean ads, boolean live) {
-        List<AccessibilityNodeInfo> nodes = new ArrayList<>(); collect(root, nodes, 0);
+    NodeHit node(AccessibilityControlTree.Live current,int width,int height,boolean ads,boolean live) {
+        if(ads) {
+            BilibiliNativePolicy.Candidate pause=BilibiliNativePolicy.find(current.tree,current.diagnosticLabels);
+            if(pause!=null) {
+                int[] box=current.tree.nodes.get(pause.labelIndex).box;
+                return new NodeHit(current.handles.get(pause.labelIndex),BilibiliVisualMatcher.AD,
+                        new Rect(box[0],box[1],box[2],box[3]),pause);
+            }
+        }
+        return node(current.handles,width,height,ads,live);
+    }
+    NodeHit node(List<AccessibilityNodeInfo> nodes, int width, int height, boolean ads, boolean live) {
         AccessibilityNodeInfo auto = null;
         boolean adLabel = false, adDetails = false;
         for (AccessibilityNodeInfo n : nodes) {
+            if(!n.isVisibleToUser() || !n.isEnabled())continue;
             String label = label(n);
             if (label.contains("自动进入直播间")) auto = n;
             if (label.equals("广告")) adLabel = true;
@@ -50,6 +65,7 @@ final class BilibiliRules {
         if (live && auto != null) {
             Rect title = bounds(auto);
             for (AccessibilityNodeInfo n : nodes) {
+                if(!n.isVisibleToUser() || !n.isEnabled())continue;
                 Rect rect = bounds(n);
                 if (label(n).equals("取消") && rect.centerY() > title.centerY() &&
                         rect.centerY() - title.centerY() < height * .14f &&
@@ -60,6 +76,7 @@ final class BilibiliRules {
         if (ads && adLabel && adDetails) {
             for (AccessibilityNodeInfo n : nodes) {
                 String id = String.valueOf(n.getViewIdResourceName()).toLowerCase(Locale.ROOT);
+                if(!n.isVisibleToUser() || !n.isEnabled())continue;
                 String label = label(n);
                 Rect rect = bounds(n);
                 boolean adId = id.contains("/ad_") || id.contains("_ad_") || id.contains("advert") || id.contains("commercial") || id.contains("promotion");
@@ -71,11 +88,6 @@ final class BilibiliRules {
             }
         }
         return null;
-    }
-    private static void collect(AccessibilityNodeInfo node, List<AccessibilityNodeInfo> result, int depth) {
-        if (node == null || depth > 24 || result.size() >= 280) return;
-        if (node.isVisibleToUser()) result.add(node);
-        for (int i = 0; i < node.getChildCount(); i++) collect(node.getChild(i), result, depth + 1);
     }
     private static String label(AccessibilityNodeInfo node) {
         String text = node.getText() == null ? "" : node.getText().toString().trim();

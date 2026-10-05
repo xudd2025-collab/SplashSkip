@@ -27,13 +27,13 @@ public final class DeviceScreens {
             packet(new JSONObject().put("kind","ready").put("pid",android.os.Process.myPid()),new byte[0]);
             long until=SystemClock.uptimeMillis()+seconds*1000L;
             while(SystemClock.uptimeMillis()<until) {
-                long began=SystemClock.uptimeMillis();Bitmap original=a.takeScreenshot(),small=null;
+                long began=SystemClock.uptimeMillis(),wall=System.currentTimeMillis();Bitmap original=a.takeScreenshot(),small=null;
                 if(original==null){SystemClock.sleep(200);continue;}
                 try {
                     int w=original.getWidth(),height=original.getHeight();float scale=Math.min(1,shortSide/(float)Math.min(w,height));
                     small=Bitmap.createScaledBitmap(original,Math.round(w*scale),Math.round(height*scale),true);
                     ByteArrayOutputStream jpeg=new ByteArrayOutputStream();small.compress(Bitmap.CompressFormat.JPEG,96,jpeg);
-                    packet(new JSONObject().put("kind","screen").put("screenshot_uptime",began).put("width",w).put("height",height)
+                    packet(new JSONObject().put("kind","screen").put("screenshot_uptime",began).put("wall_time",wall).put("width",w).put("height",height)
                         .put("image_width",small.getWidth()).put("image_height",small.getHeight()),jpeg.toByteArray());
                 }finally{if(small!=null && small!=original)small.recycle();original.recycle();}
                 long wait=200-(SystemClock.uptimeMillis()-began);if(wait>0)SystemClock.sleep(wait);
